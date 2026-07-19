@@ -1,6 +1,6 @@
 import { PAINTS } from './colors';
 import type { PlacedDecal } from './decals';
-import { STICKER_FONTS, buildTextStickerSvg, encodeTextSticker } from './textSticker';
+import { STICKER_FONTS, buildTextStickerSvg, encodeTextSticker, NO_STROKE } from './textSticker';
 import { STORY_INTRO, STORY_SECTIONS, STORY_OUTRO } from './story';
 
 export const STICKERS: { id: string; name: string }[] = [
@@ -29,14 +29,23 @@ const RECOLORABLE_STICKERS = new Set([
 export interface UICallbacks {
   onPaint(id: string): void;
   onStickerPick(id: string): void;
-  onTextStickerPlace(text: string, fontId: string, colorHex: string): void;
+  onTextStickerPlace(text: string, fontId: string, colorHex: string, strokeHex: string): void;
   onSizeChange(v: number): void;
   onRotationChange(v: number): void;
   onAspectChange(v: number): void;
   onDelete(): void;
+  onDuplicate(): void;
   onScreenshot(): void;
   onShare(): void;
   onKidToggle(): void;
+  onPartColorChange(partId: string, hex: string): void;
+}
+
+export interface UIPart {
+  id: string;
+  label: string;
+  hex: string;
+  defaultHex: string;
 }
 
 export interface UI {
@@ -46,6 +55,7 @@ export interface UI {
   setAttribution(text: string): void;
   setKidMode(active: boolean): void;
   setVisitorCounts(current: number, previous: number | null): void;
+  setCustomParts(parts: UIPart[]): void;
   toast(msg: string): void;
 }
 
@@ -68,8 +78,9 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   const shotBtn = el('button', { id: 'btn-shot' }, ['📷 截圖下載']);
   const shareBtn = el('button', { id: 'btn-share' }, ['🔗 分享連結']);
   const storyBtn = el('button', { id: 'btn-story', title: '這個網站是怎麼做出來的？' }, ['🛠️ 開發全紀錄']);
-  const kidBtn = el('button', { id: 'btn-kid', class: 'kid-toggle', title: '切換成小朋友版玩具車' }, [
-    '🧸 小朋友 Jimny',
+  const modBtn = el('button', { id: 'btn-mod', title: '零件改色' }, ['🔧 改裝']);
+  const kidBtn = el('button', { id: 'btn-kid', class: 'kid-toggle', title: '切換成小尼可醬版玩具車' }, [
+    '🧸 小尼可醬 Jimny',
   ]);
   shotBtn.addEventListener('click', () => cb.onScreenshot());
   shareBtn.addEventListener('click', () => cb.onShare());
@@ -80,7 +91,7 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   root.append(
     el('header', { class: 'topbar' }, [
       brand,
-      el('div', { class: 'actions' }, [storyBtn, shotBtn, shareBtn]),
+      el('div', { class: 'actions' }, [modBtn, storyBtn, shotBtn, shareBtn]),
     ]),
   );
 
@@ -114,24 +125,44 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   });
   root.append(storyOverlay);
 
+  // --- 零件改色面板 -------------------------------------------------------
+  const modList = el('div', { class: 'mod-list' });
+  const modPanel = el('div', { class: 'mod-panel', hidden: '' }, [
+    el('h3', {}, ['零件改色']),
+    modList,
+  ]);
+  root.append(modPanel);
+  modBtn.addEventListener('click', () => {
+    modPanel.hidden = !modPanel.hidden;
+  });
+
   const hint = el('div', { class: 'hint', hidden: '' }, ['點擊車身貼上貼紙（Esc 取消）']);
   root.append(hint);
 
   const sizeCtl = el('input', { type: 'range', min: '0.15', max: '1.2', step: '0.01' });
   const rotCtl = el('input', { type: 'range', min: '-3.14', max: '3.14', step: '0.01' });
   const aspectCtl = el('input', { type: 'range', min: '0.3', max: '3', step: '0.05' });
+  const dupBtn = el('button', {}, ['⧉ 複製']);
   const delBtn = el('button', { class: 'danger' }, ['🗑 刪除貼紙']);
   sizeCtl.addEventListener('input', () => cb.onSizeChange(Number(sizeCtl.value)));
   rotCtl.addEventListener('input', () => cb.onRotationChange(Number(rotCtl.value)));
   aspectCtl.addEventListener('input', () => cb.onAspectChange(Number(aspectCtl.value)));
+  dupBtn.addEventListener('click', () => cb.onDuplicate());
   delBtn.addEventListener('click', () => cb.onDelete());
   const panel = el('aside', { class: 'decal-panel', hidden: '' }, [
     el('label', {}, ['大小 ', sizeCtl]),
     el('label', {}, ['旋轉 ', rotCtl]),
     el('label', {}, ['比例 ', aspectCtl]),
-    delBtn,
+    el('div', { class: 'decal-panel-actions' }, [dupBtn, delBtn]),
   ]);
   root.append(panel);
+
+  window.addEventListener('keydown', (e) => {
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    const meta = e.metaKey || e.ctrlKey;
+    if (meta && e.key.toLowerCase() === 'c') cb.onDuplicate();
+  });
 
   // --- 原廠 / 客製色票 -------------------------------------------------
   const paintsEl = el('div', { class: 'row paints' });
@@ -202,6 +233,10 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
     STICKER_FONTS.map((f) => el('option', { value: f.id }, [f.label])),
   ) as HTMLSelectElement;
   const textColorInput = el('input', { type: 'color', value: '#ffffff', class: 'text-color' });
+  const strokeToggle = el('input', { type: 'checkbox', class: 'stroke-toggle', id: 'stroke-toggle' }) as HTMLInputElement;
+  strokeToggle.checked = true;
+  const strokeColorInput = el('input', { type: 'color', value: '#1a1a1a', class: 'text-color' });
+  const strokeRow = el('label', { class: 'stroke-row' }, [strokeToggle, ' 外框 ', strokeColorInput]);
   const textPreview = el('img', { class: 'text-preview', alt: '預覽' });
   const submitBtn = el('button', {}, ['貼上']);
   const textPanel = el('div', { class: 'text-panel', hidden: '' }, [
@@ -209,9 +244,13 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
     textInput,
     fontSelect,
     textColorInput,
+    strokeRow,
     submitBtn,
   ]);
   root.append(textPanel);
+
+  const currentStroke = () =>
+    strokeToggle.checked ? (strokeColorInput as HTMLInputElement).value : NO_STROKE;
 
   const updateTextPreview = () => {
     const text = textInput.value.trim();
@@ -220,12 +259,19 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
       return;
     }
     textPreview.style.visibility = 'visible';
-    const id = encodeTextSticker(text, fontSelect.value, (textColorInput as HTMLInputElement).value);
+    const id = encodeTextSticker(
+      text,
+      fontSelect.value,
+      (textColorInput as HTMLInputElement).value,
+      currentStroke(),
+    );
     textPreview.src = `data:image/svg+xml;utf8,${encodeURIComponent(buildTextStickerSvg(id))}`;
   };
   textInput.addEventListener('input', updateTextPreview);
   fontSelect.addEventListener('change', updateTextPreview);
   textColorInput.addEventListener('input', updateTextPreview);
+  strokeToggle.addEventListener('change', updateTextPreview);
+  strokeColorInput.addEventListener('input', updateTextPreview);
 
   textToggleBtn.addEventListener('click', () => {
     textPanel.hidden = !textPanel.hidden;
@@ -238,7 +284,7 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   const submitText = () => {
     const text = textInput.value.trim();
     if (!text) return;
-    cb.onTextStickerPlace(text, fontSelect.value, (textColorInput as HTMLInputElement).value);
+    cb.onTextStickerPlace(text, fontSelect.value, (textColorInput as HTMLInputElement).value, currentStroke());
     textPanel.hidden = true;
   };
   submitBtn.addEventListener('click', submitText);
@@ -279,6 +325,23 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
     },
     setKidMode(active) {
       kidBtn.classList.toggle('active', active);
+    },
+    setCustomParts(parts) {
+      modList.replaceChildren();
+      if (parts.length === 0) {
+        modList.append(el('p', { class: 'mod-empty' }, ['這個模型沒有可改色的零件（小尼可醬版沒有零件資料）']));
+        return;
+      }
+      for (const part of parts) {
+        const input = el('input', { type: 'color', value: part.hex });
+        input.addEventListener('input', () => cb.onPartColorChange(part.id, (input as HTMLInputElement).value));
+        const resetBtn = el('button', { class: 'mod-reset', title: '還原原廠色' }, ['↺']);
+        resetBtn.addEventListener('click', () => {
+          (input as HTMLInputElement).value = part.defaultHex;
+          cb.onPartColorChange(part.id, part.defaultHex);
+        });
+        modList.append(el('label', { class: 'mod-row' }, [part.label, input, resetBtn]));
+      }
     },
     setVisitorCounts(current, previous) {
       visitorEl.textContent =

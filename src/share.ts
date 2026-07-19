@@ -3,6 +3,7 @@ import type { SerializedDecal } from './decals';
 export interface AppState {
   c: string; // paint id
   d: SerializedDecal[];
+  p?: Record<string, string>; // 零件改色：partId -> 色碼
 }
 
 export function encodeStateToHash(state: AppState) {

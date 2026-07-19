@@ -1,15 +1,15 @@
 import './style.css';
 import { createViewer } from './viewer';
-import { loadRealModel, buildKidModel, applyPaint, type CarModel } from './model';
+import { loadRealModel, buildKidModel, applyPaint, applyPartColor, type CarModel } from './model';
 import { DecalManager } from './decals';
 import { DEFAULT_PAINT_ID, getPaint } from './colors';
 import { encodeStateToHash, decodeStateFromHash } from './share';
 import { encodeTextSticker } from './textSticker';
-import { buildUI } from './ui';
+import { buildUI, type UIPart } from './ui';
 import { trackVisit } from './visitor';
 
 const REAL_ATTRIBUTION = '3D model: "2023 Suzuki Jimny Sierra" by tonielpro520 (Sketchfab), CC-BY-4.0';
-const KID_ATTRIBUTION = '小朋友版 Jimny — 積木玩具風，操作最簡單 🧸';
+const KID_ATTRIBUTION = '小尼可醬版 Jimny — 積木玩具風，操作最簡單 🧸';
 
 const app = document.querySelector<HTMLElement>('#app')!;
 const viewer = createViewer(app);
@@ -20,7 +20,17 @@ let kidModel: CarModel | null = null;
 let usingKid = false;
 let currentPaintId = DEFAULT_PAINT_ID;
 
-const decalManager = new DecalManager(viewer, () => model);
+const decalManager = new DecalManager(viewer, () => model, app);
+
+function refreshCustomPartsUI() {
+  const parts: UIPart[] = (model?.customParts ?? []).map((p) => ({
+    id: p.id,
+    label: p.label,
+    hex: `#${p.material.color.getHexString()}`,
+    defaultHex: p.defaultHex,
+  }));
+  ui.setCustomParts(parts);
+}
 
 function activate(next: CarModel) {
   const hadDecals = decalManager.decals.length > 0;
@@ -29,6 +39,7 @@ function activate(next: CarModel) {
   model = next;
   viewer.scene.add(model.root);
   applyPaint(model, getPaint(currentPaintId));
+  refreshCustomPartsUI();
   if (hadDecals) ui.toast('已切換車型，貼紙重新開始擺放');
 }
 
@@ -59,8 +70,8 @@ const ui = buildUI(app, {
     if (decalManager.placingStickerId === id) decalManager.cancelPlacement();
     else decalManager.beginPlacement(id);
   },
-  onTextStickerPlace(text, fontId, colorHex) {
-    decalManager.beginPlacement(encodeTextSticker(text, fontId, colorHex));
+  onTextStickerPlace(text, fontId, colorHex, strokeHex) {
+    decalManager.beginPlacement(encodeTextSticker(text, fontId, colorHex, strokeHex));
   },
   onSizeChange(v) {
     decalManager.setSelectedSize(v);
@@ -73,6 +84,9 @@ const ui = buildUI(app, {
   },
   onDelete() {
     decalManager.deleteSelected();
+  },
+  onDuplicate() {
+    decalManager.duplicateSelected();
   },
   onScreenshot() {
     viewer.renderer.render(viewer.scene, viewer.camera);
@@ -88,7 +102,9 @@ const ui = buildUI(app, {
     }, 'image/png');
   },
   onShare() {
-    const hash = encodeStateToHash({ c: currentPaintId, d: decalManager.serialize() });
+    const partColors: Record<string, string> = {};
+    for (const p of model?.customParts ?? []) partColors[p.id] = `#${p.material.color.getHexString()}`;
+    const hash = encodeStateToHash({ c: currentPaintId, d: decalManager.serialize(), p: partColors });
     const url = `${location.origin}${location.pathname}${hash}`;
     history.replaceState(null, '', hash);
     navigator.clipboard
@@ -98,6 +114,9 @@ const ui = buildUI(app, {
   },
   onKidToggle() {
     setKidMode(!usingKid);
+  },
+  onPartColorChange(partId, hex) {
+    if (model) applyPartColor(model, partId, hex);
   },
 });
 
@@ -121,13 +140,18 @@ async function boot() {
   ui.setKidMode(usingKid);
   ui.setActivePaint(currentPaintId);
 
+  if (shared?.p && model) {
+    for (const [partId, hex] of Object.entries(shared.p)) applyPartColor(model, partId, hex);
+    refreshCustomPartsUI();
+  }
+
   if (shared?.d?.length) await decalManager.restore(shared.d);
 
   ui.setAttribution(
     usingKid
       ? realModel
         ? KID_ATTRIBUTION
-        : '正式模型載入失敗，暫以小朋友版顯示'
+        : '正式模型載入失敗，暫以小尼可醬版顯示'
       : REAL_ATTRIBUTION,
   );
 }

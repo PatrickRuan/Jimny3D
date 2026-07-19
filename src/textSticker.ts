@@ -25,14 +25,32 @@ export function isTextSticker(id: string): boolean {
   return id.startsWith(PREFIX);
 }
 
-export function encodeTextSticker(text: string, fontId: string, colorHex: string): string {
-  return `${PREFIX}${fontId}:${colorHex.replace('#', '')}:${encodeURIComponent(text)}`;
+export const NO_STROKE = 'none';
+
+export function encodeTextSticker(
+  text: string,
+  fontId: string,
+  colorHex: string,
+  strokeHex: string = '#1a1a1a', // 傳 NO_STROKE 表示無外框
+): string {
+  const stroke = strokeHex === NO_STROKE ? NO_STROKE : strokeHex.replace('#', '');
+  return `${PREFIX}${fontId}:${colorHex.replace('#', '')}:${stroke}:${encodeURIComponent(text)}`;
 }
 
-export function decodeTextSticker(id: string): { text: string; fontId: string; color: string } {
-  const rest = id.slice(PREFIX.length);
-  const [fontId, color, ...encTextParts] = rest.split(':');
-  return { fontId, color, text: decodeURIComponent(encTextParts.join(':')) };
+export function decodeTextSticker(id: string): {
+  text: string;
+  fontId: string;
+  color: string;
+  stroke: string; // 色碼（不含 #）或 NO_STROKE
+} {
+  const parts = id.slice(PREFIX.length).split(':');
+  if (parts.length >= 4) {
+    const [fontId, color, stroke, encText] = parts;
+    return { fontId, color, stroke, text: decodeURIComponent(encText) };
+  }
+  // 舊版三段格式（無外框色欄位）：預設黑框，讓舊分享連結繼續可用
+  const [fontId, color, encText] = parts;
+  return { fontId, color, stroke: '1a1a1a', text: decodeURIComponent(encText) };
 }
 
 const CANVAS_SIZE = 512;
@@ -56,9 +74,10 @@ function fitFontSize(text: string, cssFont: string): number {
 }
 
 export function buildTextStickerSvg(id: string): string {
-  const { text, fontId, color } = decodeTextSticker(id);
+  const { text, fontId, color, stroke } = decodeTextSticker(id);
   const font = getFont(fontId).css;
   const safe = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const fontSize = fitFontSize(text, font);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><text x="256" y="290" font-family='${font}' font-size="${fontSize}" font-weight="800" text-anchor="middle" fill="#${color}" stroke="#1a1a1a" stroke-width="4">${safe}</text></svg>`;
+  const strokeAttrs = stroke === NO_STROKE ? '' : ` stroke="#${stroke}" stroke-width="4"`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><text x="256" y="290" font-family='${font}' font-size="${fontSize}" font-weight="800" text-anchor="middle" fill="#${color}"${strokeAttrs}>${safe}</text></svg>`;
 }

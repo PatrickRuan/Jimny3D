@@ -3,22 +3,31 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { PaintOption } from './colors';
+import { ROOF_SHELL_MESH_NAMES, BODY_PAINT_MATERIAL_NAME, CUSTOM_PARTS } from './parts';
+
+export interface CustomPart {
+  id: string;
+  label: string;
+  material: THREE.MeshPhysicalMaterial;
+  defaultHex: string;
+}
 
 export interface CarModel {
   root: THREE.Group;
   bodyMaterials: THREE.MeshPhysicalMaterial[];
   roofMaterials: THREE.MeshPhysicalMaterial[];
-  /** 同一份幾何內用 shader 依世界高度分車身/車頂色的材質 */
+  /** 同一份幾何內用 shader 依世界高度分車身/車頂色的材質——只在找不到零件層級的車頂殼時當備援 */
   twoToneMaterials: TwoToneMaterial[];
   /** 貼紙 raycast 的目標（車身外板） */
   paintableMeshes: THREE.Mesh[];
-  /** true = 小朋友版積木模型 */
+  /** 可獨立改色的既有零件（輪圈、後視鏡……），依 src/parts.ts 定義 */
+  customParts: CustomPart[];
+  /** true = 小尼可醬版積木模型 */
   isKid: boolean;
 }
 
 interface TwoToneMaterial {
   material: THREE.MeshPhysicalMaterial;
-  /** false = 這塊區域的「車身側」顏色維持原樣（例如黑色飾條），不隨換色改變 */
   followBody: boolean;
   uniforms: {
     uBodyColor: { value: THREE.Color };
@@ -28,10 +37,9 @@ interface TwoToneMaterial {
   };
 }
 
-// 車身/車頂雙色交界改用 fragment shader 依世界座標高度做顏色混合，
-// 而不是把三角形逐一分類成兩個 group——後者交界線會沿著模型既有的三角化紋路走，
-// 在鏡頭拉近時看起來像鋸齒；shader 版本的交界永遠是一條數學上乾淨的線，
-// 邊緣再用 smoothstep 做極窄的柔化，本身就自帶抗鋸齒效果。
+// 備援用：找不到車頂殼 mesh 時，退回用 shader 依世界座標高度做顏色混合，
+// 交界仍是數學上乾淨的線（不會有三角形分類造成的鋸齒），但終究是用高度猜，
+// 不會像零件層級上色那樣精準對齊車體接縫。
 function createTwoToneMaterial(src: THREE.Material, roofY: number, followBody: boolean): TwoToneMaterial {
   const mat = toPhysical(src);
   const uniforms = {
@@ -93,6 +101,11 @@ function toPhysical(mat: THREE.Material): THREE.MeshPhysicalMaterial {
   });
 }
 
+function meshMaterialNames(mesh: THREE.Mesh): string[] {
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  return mats.map((m) => m.name);
+}
+
 export async function loadRealModel(): Promise<CarModel> {
   const draco = new DRACOLoader();
   // 打包在專案裡，不依賴外部 CDN（避免離線/網路受限環境載入失敗）
@@ -126,79 +139,99 @@ export async function loadRealModel(): Promise<CarModel> {
 
   gltf.scene.updateMatrixWorld(true);
 
-  const paintMeshes: THREE.Mesh[] = [];
+  // 協助除錯：在 console 列出模型的完整 mesh/材質結構
   gltf.scene.traverse((obj) => {
     if (!(obj as THREE.Mesh).isMesh) return;
     const mesh = obj as THREE.Mesh;
     mesh.castShadow = true;
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const mat of mats) meshInfo.push({ mesh: mesh.name, material: mat.name });
-
-    const label = `${mesh.name} ${mats.map((m) => m.name).join(' ')}`;
-    if (excludeRe.test(label)) return;
-    const isRoof = roofRe.test(label);
-    const isBody = bodyRe.test(label);
-    if (!isRoof && !isBody) return;
-
-    if (isRoof) {
-      const cloned = mats.map((m) => toPhysical(m));
-      mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0];
-      roofMaterials.push(...cloned);
-      paintableMeshes.push(mesh);
-    } else {
-      paintMeshes.push(mesh);
-    }
+    for (const matName of meshMaterialNames(mesh)) meshInfo.push({ mesh: mesh.name, material: matName });
   });
-
-  if (paintMeshes.length > 0) {
-    // 車頂沒有獨立分件時：用 shader 依世界座標高度把漆面分成車身/車頂兩色，
-    // 讓雙色車型（黑車頂）能運作，且交界是乾淨的線而不是鋸齒
-    const firstMat = Array.isArray(paintMeshes[0].material)
-      ? paintMeshes[0].material[0]
-      : paintMeshes[0].material;
-
-    const bbox = new THREE.Box3();
-    for (const mesh of paintMeshes) bbox.expandByObject(mesh);
-    const roofY = bbox.min.y + (bbox.max.y - bbox.min.y) * 0.9;
-
-    const bodyTT = createTwoToneMaterial(firstMat, roofY, true);
-    twoToneMaterials.push(bodyTT);
-    for (const mesh of paintMeshes) {
-      mesh.material = bodyTT.material;
-      paintableMeshes.push(mesh);
-    }
-
-    // 有些模型（如此 Sierra 模型）的車頂外皮做在獨立的塑料材質上：
-    // 用幾何特徵（大面積 + 到達車頂高度）找出來，車頂線以上一併算進車頂色
-    // （車頂線以下維持原色，例如黑色飾條，不隨換色改變）
-    const carBox = new THREE.Box3().setFromObject(gltf.scene);
-    const carW = carBox.max.x - carBox.min.x;
-    const carL = carBox.max.z - carBox.min.z;
-    gltf.scene.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      if (!mesh.isMesh || paintableMeshes.includes(mesh)) return;
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      if (excludeRe.test(`${mesh.name} ${mats.map((m) => m.name).join(' ')}`)) return;
-      mesh.geometry.computeBoundingBox();
-      const bb = mesh.geometry.boundingBox!.clone().applyMatrix4(mesh.matrixWorld);
-      // 以車頂線為基準（不用全車最高點——天線/行李架會把它拉高）
-      const nearTop = bb.max.y > roofY + 0.03;
-      const wide = bb.max.x - bb.min.x > carW * 0.55;
-      const long = bb.max.z - bb.min.z > carL * 0.4;
-      if (!nearTop || !wide || !long) return;
-      const trimTT = createTwoToneMaterial(mats[0], roofY, false);
-      twoToneMaterials.push(trimTT);
-      mesh.material = trimTT.material;
-      paintableMeshes.push(mesh);
-    });
-  }
-
-  // 協助調整分類規則：在 console 列出模型結構
   console.info('[Jimny3D] glTF mesh 結構：');
   console.table(meshInfo);
 
+  // --- 車身鈑件：BODY_PAINT_MATERIAL_NAME 底下的 mesh 整塊都是車身，不含車頂 -------
+  const paintMeshes: THREE.Mesh[] = [];
+  gltf.scene.traverse((obj) => {
+    if (!(obj as THREE.Mesh).isMesh) return;
+    const mesh = obj as THREE.Mesh;
+    if (meshMaterialNames(mesh).includes(BODY_PAINT_MATERIAL_NAME)) paintMeshes.push(mesh);
+  });
+
+  if (paintMeshes.length > 0) {
+    const firstMat = Array.isArray(paintMeshes[0].material)
+      ? paintMeshes[0].material[0]
+      : paintMeshes[0].material;
+    const bodyMat = toPhysical(firstMat);
+    bodyMaterials.push(bodyMat);
+    for (const mesh of paintMeshes) {
+      mesh.material = bodyMat;
+      paintableMeshes.push(mesh);
+    }
+  } else {
+    // 沒有比對到已知的漆面材質名稱（例如換了別的模型）：退回用命名規則猜車身/車頂
+    gltf.scene.traverse((obj) => {
+      if (!(obj as THREE.Mesh).isMesh) return;
+      const mesh = obj as THREE.Mesh;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const label = `${mesh.name} ${mats.map((m) => m.name).join(' ')}`;
+      if (excludeRe.test(label)) return;
+      if (roofRe.test(label)) {
+        const cloned = mats.map((m) => toPhysical(m));
+        mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0];
+        roofMaterials.push(...cloned);
+        paintableMeshes.push(mesh);
+      } else if (bodyRe.test(label)) {
+        paintMeshes.push(mesh);
+      }
+    });
+    if (paintMeshes.length > 0) {
+      const firstMat = Array.isArray(paintMeshes[0].material)
+        ? paintMeshes[0].material[0]
+        : paintMeshes[0].material;
+      const bodyMat = toPhysical(firstMat);
+      bodyMaterials.push(bodyMat);
+      for (const mesh of paintMeshes) {
+        mesh.material = bodyMat;
+        paintableMeshes.push(mesh);
+      }
+    }
+  }
+
+  // --- 車頂殼：整塊上色，不用高度猜切割線 -----------------------------------
+  const roofMeshes: THREE.Mesh[] = [];
+  gltf.scene.traverse((obj) => {
+    if (!(obj as THREE.Mesh).isMesh) return;
+    const mesh = obj as THREE.Mesh;
+    if (ROOF_SHELL_MESH_NAMES.includes(mesh.name)) roofMeshes.push(mesh);
+  });
+
+  if (roofMeshes.length > 0) {
+    const firstMat = Array.isArray(roofMeshes[0].material)
+      ? roofMeshes[0].material[0]
+      : roofMeshes[0].material;
+    const roofMat = toPhysical(firstMat);
+    roofMaterials.push(roofMat);
+    for (const mesh of roofMeshes) {
+      mesh.material = roofMat;
+      paintableMeshes.push(mesh);
+    }
+  } else if (paintMeshes.length > 0) {
+    // 對不上已知的車頂殼 mesh 名稱（例如換了別的模型）：退回用 shader 依高度切色，
+    // 至少雙色車型還能用，只是交界不保證對齊零件邊界
+    console.warn('[Jimny3D] 找不到車頂殼 mesh，退回用高度切色（見 src/parts.ts ROOF_SHELL_MESH_NAMES）');
+    const firstMat = Array.isArray(paintMeshes[0].material)
+      ? paintMeshes[0].material[0]
+      : paintMeshes[0].material;
+    const bbox = new THREE.Box3();
+    for (const mesh of paintMeshes) bbox.expandByObject(mesh);
+    const roofY = bbox.min.y + (bbox.max.y - bbox.min.y) * 0.9;
+    const bodyTT = createTwoToneMaterial(firstMat, roofY, true);
+    twoToneMaterials.push(bodyTT);
+    for (const mesh of paintMeshes) mesh.material = bodyTT.material;
+  }
+
   if (bodyMaterials.length === 0) {
-    // 找不到符合命名的車身 → 退而求其次，把最大的 mesh 當車身
+    // 完全找不到車身 → 退而求其次，把最大的 mesh 當車身
     let biggest: THREE.Mesh | null = null;
     let maxCount = 0;
     gltf.scene.traverse((obj) => {
@@ -220,7 +253,27 @@ export async function loadRealModel(): Promise<CarModel> {
     }
   }
 
-  return { root, bodyMaterials, roofMaterials, twoToneMaterials, paintableMeshes, isKid: false };
+  // --- 可改色的既有零件（輪圈、後視鏡……）------------------------------------
+  const customParts: CustomPart[] = [];
+  for (const def of CUSTOM_PARTS) {
+    const meshes: THREE.Mesh[] = [];
+    let sample: THREE.Material | null = null;
+    gltf.scene.traverse((obj) => {
+      if (!(obj as THREE.Mesh).isMesh) return;
+      const mesh = obj as THREE.Mesh;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const hit = mats.find((m) => def.materialNames.includes(m.name));
+      if (!hit) return;
+      meshes.push(mesh);
+      if (!sample) sample = hit;
+    });
+    if (meshes.length === 0 || !sample) continue;
+    const mat = toPhysical(sample);
+    for (const mesh of meshes) mesh.material = mat;
+    customParts.push({ id: def.id, label: def.label, material: mat, defaultHex: `#${mat.color.getHexString()}` });
+  }
+
+  return { root, bodyMaterials, roofMaterials, twoToneMaterials, paintableMeshes, customParts, isKid: false };
 }
 
 function applyPhysicalProps(mat: THREE.MeshPhysicalMaterial, m: PaintOption['material']) {
@@ -247,8 +300,15 @@ export function applyPaint(model: CarModel, paint: PaintOption) {
   }
 }
 
+export function applyPartColor(model: CarModel, partId: string, hex: string) {
+  const part = model.customParts.find((p) => p.id === partId);
+  if (!part) return;
+  part.material.color.set(hex);
+  part.material.needsUpdate = true;
+}
+
 // ---------------------------------------------------------------------------
-// 小朋友版：方塊玩具風 JB74，車身與車頂分件，操作最簡單、外觀最可愛
+// 小尼可醬版：方塊玩具風 JB74，車身與車頂分件，操作最簡單、外觀最可愛
 // ---------------------------------------------------------------------------
 
 export function buildKidModel(): CarModel {
@@ -347,6 +407,7 @@ export function buildKidModel(): CarModel {
     roofMaterials: [roofMat],
     twoToneMaterials: [],
     paintableMeshes,
+    customParts: [],
     isKid: true,
   };
 }

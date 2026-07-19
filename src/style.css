@@ -136,6 +136,37 @@ button.danger {
   color: #444;
 }
 
+.decal-panel-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.decal-panel-actions button {
+  flex: 1;
+  font-size: 13px;
+  padding: 8px 6px;
+}
+
+.decal-handle {
+  position: fixed;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  background: #4a7c3a;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 15;
+  cursor: grab;
+  touch-action: none;
+}
+
+.decal-handle:active {
+  cursor: grabbing;
+}
+
 .dock {
   position: absolute;
   left: 50%;
@@ -264,6 +295,73 @@ button.danger {
   border: 1px solid rgba(0, 0, 0, 0.15);
   border-radius: 8px;
   cursor: pointer;
+}
+
+.stroke-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  font-size: 13px;
+  color: #444;
+}
+
+.stroke-row .text-color {
+  flex: 1;
+  height: 26px;
+}
+
+.mod-panel {
+  position: absolute;
+  left: 16px;
+  top: 70px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 14px 16px;
+  border-radius: 14px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+  z-index: 11;
+  width: 220px;
+}
+
+.mod-panel h3 {
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.mod-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mod-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #333;
+}
+
+.mod-row input[type='color'] {
+  margin-left: auto;
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mod-reset {
+  padding: 4px 7px;
+  font-size: 12px;
+}
+
+.mod-empty {
+  font-size: 12px;
+  color: #777;
+  line-height: 1.5;
 }
 
 .attribution {

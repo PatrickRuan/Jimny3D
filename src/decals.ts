@@ -28,6 +28,15 @@ export interface SerializedDecal {
 const DEFAULT_SIZE = 0.45;
 const DEFAULT_ASPECT = 1;
 
+interface HandleDrag {
+  kind: 'rotate' | 'scale';
+  center: { x: number; y: number };
+  startX: number;
+  startY: number;
+  startRotation: number;
+  startSize: number;
+}
+
 export class DecalManager {
   decals: PlacedDecal[] = [];
   selected: PlacedDecal | null = null;
@@ -43,22 +52,41 @@ export class DecalManager {
   private textureCache = new Map<string, THREE.Texture>();
   private downPos: { x: number; y: number } | null = null;
   private lastPreviewAt = 0;
+  private draggingDecal = false;
+  private handleDrag: HandleDrag | null = null;
 
   private viewer: Viewer;
   private getModel: () => CarModel | null;
+  private gizmoRotate: HTMLButtonElement;
+  private gizmoScale: HTMLButtonElement;
 
-  constructor(viewer: Viewer, getModel: () => CarModel | null) {
+  constructor(viewer: Viewer, getModel: () => CarModel | null, gizmoContainer: HTMLElement) {
     this.viewer = viewer;
     this.getModel = getModel;
     const canvas = viewer.canvas;
-    canvas.addEventListener('pointerdown', (e) => {
-      this.downPos = { x: e.clientX, y: e.clientY };
-    });
+    canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
     canvas.addEventListener('pointerup', (e) => this.onPointerUp(e));
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.cancelPlacement();
     });
+
+    this.gizmoRotate = document.createElement('button');
+    this.gizmoRotate.className = 'decal-handle decal-handle-rotate';
+    this.gizmoRotate.title = '拖曳旋轉';
+    this.gizmoRotate.textContent = '↻';
+    this.gizmoRotate.hidden = true;
+    this.gizmoRotate.addEventListener('pointerdown', (e) => this.beginHandleDrag('rotate', e));
+
+    this.gizmoScale = document.createElement('button');
+    this.gizmoScale.className = 'decal-handle decal-handle-scale';
+    this.gizmoScale.title = '拖曳縮放';
+    this.gizmoScale.textContent = '⤡';
+    this.gizmoScale.hidden = true;
+    this.gizmoScale.addEventListener('pointerdown', (e) => this.beginHandleDrag('scale', e));
+
+    gizmoContainer.append(this.gizmoRotate, this.gizmoScale);
+    viewer.onFrame(() => this.updateGizmo());
   }
 
   beginPlacement(stickerId: string) {
@@ -109,6 +137,29 @@ export class DecalManager {
     d.mesh.geometry.dispose();
     this.decals = this.decals.filter((x) => x !== d);
     this.select(null);
+  }
+
+  async duplicateSelected() {
+    if (!this.selected) return;
+    const model = this.getModel();
+    const target = model?.paintableMeshes[this.selected.targetIndex];
+    if (!target) return;
+    // 沿著表面切線偏移一點位置，這樣看得出是複製出來的新貼紙，而不是疊在原本那張上面
+    const tangent = new THREE.Vector3(1, 0, 0).cross(this.selected.normal);
+    if (tangent.lengthSq() < 1e-6) tangent.set(0, 0, 1).cross(this.selected.normal);
+    tangent.normalize().multiplyScalar(0.12);
+    const newPos = this.selected.position.clone().add(tangent);
+    const d = await this.place(
+      this.selected.stickerId,
+      target,
+      this.selected.targetIndex,
+      newPos,
+      this.selected.normal.clone(),
+      this.selected.rotation,
+      this.selected.size,
+      this.selected.aspect,
+    );
+    this.select(d);
   }
 
   clearAll() {
@@ -178,7 +229,105 @@ export class DecalManager {
     return hits[0] ?? null;
   }
 
+  private raycastMesh(e: PointerEvent, mesh: THREE.Mesh): THREE.Intersection | null {
+    this.updatePointer(e);
+    this.raycaster.setFromCamera(this.pointer, this.viewer.camera);
+    const hits = this.raycaster.intersectObject(mesh, false);
+    return hits[0] ?? null;
+  }
+
+  private projectToScreen(pos: THREE.Vector3): { x: number; y: number } {
+    const v = pos.clone().project(this.viewer.camera);
+    const rect = this.viewer.canvas.getBoundingClientRect();
+    return {
+      x: rect.left + (v.x * 0.5 + 0.5) * rect.width,
+      y: rect.top + (1 - (v.y * 0.5 + 0.5)) * rect.height,
+    };
+  }
+
+  private updateGizmo() {
+    if (!this.selected) {
+      this.gizmoRotate.hidden = true;
+      this.gizmoScale.hidden = true;
+      return;
+    }
+    const c = this.projectToScreen(this.selected.position);
+    this.gizmoRotate.hidden = false;
+    this.gizmoScale.hidden = false;
+    this.gizmoRotate.style.left = `${c.x - 14}px`;
+    this.gizmoRotate.style.top = `${c.y - 54}px`;
+    this.gizmoScale.style.left = `${c.x + 26}px`;
+    this.gizmoScale.style.top = `${c.y + 26}px`;
+  }
+
+  private beginHandleDrag(kind: 'rotate' | 'scale', e: PointerEvent) {
+    if (!this.selected) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.handleDrag = {
+      kind,
+      center: this.projectToScreen(this.selected.position),
+      startX: e.clientX,
+      startY: e.clientY,
+      startRotation: this.selected.rotation,
+      startSize: this.selected.size,
+    };
+    this.viewer.controls.enabled = false;
+    window.addEventListener('pointermove', this.onHandleMove);
+    window.addEventListener('pointerup', this.onHandleUp);
+  }
+
+  private onHandleMove = (e: PointerEvent) => {
+    if (!this.handleDrag || !this.selected) return;
+    const { kind, center, startX, startY, startRotation, startSize } = this.handleDrag;
+    if (kind === 'rotate') {
+      const a0 = Math.atan2(startY - center.y, startX - center.x);
+      const a1 = Math.atan2(e.clientY - center.y, e.clientX - center.x);
+      this.selected.rotation = startRotation + (a1 - a0);
+      this.rebuild(this.selected);
+    } else {
+      const d0 = Math.hypot(startX - center.x, startY - center.y) || 1;
+      const d1 = Math.hypot(e.clientX - center.x, e.clientY - center.y);
+      this.selected.size = Math.min(1.2, Math.max(0.15, startSize * (d1 / d0)));
+      this.rebuild(this.selected);
+    }
+    this.onSelectionChange(this.selected); // 同步滑桿數值
+  };
+
+  private onHandleUp = () => {
+    this.handleDrag = null;
+    this.viewer.controls.enabled = true;
+    window.removeEventListener('pointermove', this.onHandleMove);
+    window.removeEventListener('pointerup', this.onHandleUp);
+  };
+
+  private onPointerDown(e: PointerEvent) {
+    this.downPos = { x: e.clientX, y: e.clientY };
+    if (this.placingStickerId || !this.selected) return;
+    // 直接在已選取的貼紙上按下 → 進入拖曳移動模式
+    if (this.raycastMesh(e, this.selected.mesh)) {
+      this.draggingDecal = true;
+      this.viewer.controls.enabled = false;
+    }
+  }
+
   private onPointerMove(e: PointerEvent) {
+    if (this.draggingDecal && this.selected) {
+      const model = this.getModel();
+      const hit = this.raycastCar(e);
+      if (hit && hit.face && model) {
+        const normal = hit.face.normal
+          .clone()
+          .transformDirection(hit.object.matrixWorld)
+          .normalize();
+        this.selected.position.copy(hit.point);
+        this.selected.normal.copy(normal);
+        this.selected.targetIndex = model.paintableMeshes.indexOf(hit.object as THREE.Mesh);
+        this.rebuild(this.selected);
+      }
+      return;
+    }
+
     if (!this.placingStickerId) return;
     // 高面數模型上重建 DecalGeometry 成本高，預覽節流
     const now = performance.now();
@@ -210,6 +359,13 @@ export class DecalManager {
   }
 
   private async onPointerUp(e: PointerEvent) {
+    if (this.draggingDecal) {
+      this.draggingDecal = false;
+      this.viewer.controls.enabled = true;
+      this.downPos = null;
+      return;
+    }
+
     // 拖曳（旋轉視角）不算點擊
     if (this.downPos) {
       const dx = e.clientX - this.downPos.x;

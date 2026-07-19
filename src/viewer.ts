@@ -8,6 +8,8 @@ export interface Viewer {
   renderer: THREE.WebGLRenderer;
   controls: OrbitControls;
   canvas: HTMLCanvasElement;
+  /** 註冊每一幀都要執行的回呼（例如貼紙 gizmo 把手要跟著車身投影到螢幕座標） */
+  onFrame: (fn: () => void) => void;
 }
 
 export function createViewer(container: HTMLElement): Viewer {
@@ -72,10 +74,20 @@ export function createViewer(container: HTMLElement): Viewer {
     renderer.setSize(container.clientWidth, container.clientHeight);
   });
 
+  const frameCallbacks: Array<() => void> = [];
+
   renderer.setAnimationLoop(() => {
     controls.update();
     renderer.render(scene, camera);
+    for (const fn of frameCallbacks) fn();
   });
 
-  return { scene, camera, renderer, controls, canvas: renderer.domElement };
+  return {
+    scene,
+    camera,
+    renderer,
+    controls,
+    canvas: renderer.domElement,
+    onFrame: (fn) => frameCallbacks.push(fn),
+  };
 }
