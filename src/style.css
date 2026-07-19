@@ -79,6 +79,11 @@ button.danger {
   color: #fff;
 }
 
+.kid-toggle.active {
+  background: #4a7c3a;
+  color: #fff;
+}
+
 .hint {
   position: absolute;
   top: 64px;
@@ -131,11 +136,14 @@ button.danger {
 
 .row {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
   background: rgba(255, 255, 255, 0.88);
   padding: 8px 12px;
-  border-radius: 999px;
+  border-radius: 18px;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.14);
+  max-width: min(94vw, 640px);
 }
 
 .swatch {
@@ -145,11 +153,22 @@ button.danger {
   padding: 0;
   border: 2px solid rgba(0, 0, 0, 0.15);
   box-shadow: none;
+  flex: none;
+}
+
+.swatch.custom {
+  border-style: dashed;
+  border-color: rgba(0, 0, 0, 0.35);
 }
 
 .swatch.active {
   outline: 3px solid #4a7c3a;
   outline-offset: 2px;
+}
+
+.sticker-wrap {
+  position: relative;
+  flex: none;
 }
 
 .sticker {
@@ -159,6 +178,7 @@ button.danger {
   padding: 4px;
   background: #5b6167;
   box-shadow: none;
+  font-weight: 700;
 }
 
 .sticker img {
@@ -170,6 +190,66 @@ button.danger {
 .sticker.active {
   outline: 3px solid #4a7c3a;
   outline-offset: 1px;
+}
+
+.sticker-color {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.text-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 100px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 14px;
+  border-radius: 14px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+  z-index: 11;
+  width: 220px;
+}
+
+.text-panel .text-preview {
+  width: 100px;
+  height: 100px;
+  object-fit: contain;
+}
+
+.text-panel .text-input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  font-size: 14px;
+}
+
+.text-panel .text-font {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.text-panel .text-color {
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  cursor: pointer;
 }
 
 .attribution {

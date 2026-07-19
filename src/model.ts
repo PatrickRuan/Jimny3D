@@ -6,31 +6,50 @@ import type { PaintOption } from './colors';
 
 export interface CarModel {
   root: THREE.Group;
-  bodyMaterials: THREE.MeshStandardMaterial[];
-  roofMaterials: THREE.MeshStandardMaterial[];
+  bodyMaterials: THREE.MeshPhysicalMaterial[];
+  roofMaterials: THREE.MeshPhysicalMaterial[];
   /** 貼紙 raycast 的目標（車身外板） */
   paintableMeshes: THREE.Mesh[];
-  isPlaceholder: boolean;
+  /** true = 小朋友版積木模型 */
+  isKid: boolean;
 }
 
 const MODEL_URL = 'models/jimny.glb';
 
-export async function loadCarModel(scene: THREE.Scene): Promise<CarModel> {
-  try {
-    const model = await loadGltf();
-    scene.add(model.root);
-    return model;
-  } catch {
-    console.info('[Jimny3D] 找不到 public/models/jimny.glb，使用內建佔位模型。');
-    const model = buildPlaceholder();
-    scene.add(model.root);
-    return model;
-  }
+// 把材質升級成 MeshPhysicalMaterial（保留原本貼圖/顏色），
+// 這樣才能套用 clearcoat 等原廠烤漆質感參數。
+// 注意：不能用 MeshPhysicalMaterial.prototype.copy() 從 MeshStandardMaterial 複製——
+// 它會假設來源已有 clearcoatNormalScale 等 physical 專屬欄位，來源沒有時會直接噴錯。
+function toPhysical(mat: THREE.Material): THREE.MeshPhysicalMaterial {
+  const src = mat as THREE.MeshStandardMaterial;
+  return new THREE.MeshPhysicalMaterial({
+    name: src.name,
+    color: src.color?.clone(),
+    map: src.map ?? null,
+    normalMap: src.normalMap ?? null,
+    normalScale: src.normalScale?.clone(),
+    roughnessMap: src.roughnessMap ?? null,
+    metalnessMap: src.metalnessMap ?? null,
+    aoMap: src.aoMap ?? null,
+    aoMapIntensity: src.aoMapIntensity,
+    emissive: src.emissive?.clone(),
+    emissiveMap: src.emissiveMap ?? null,
+    emissiveIntensity: src.emissiveIntensity,
+    roughness: src.roughness,
+    metalness: src.metalness,
+    transparent: src.transparent,
+    opacity: src.opacity,
+    alphaMap: src.alphaMap ?? null,
+    side: src.side,
+    envMap: src.envMap ?? null,
+    envMapIntensity: src.envMapIntensity,
+  });
 }
 
-async function loadGltf(): Promise<CarModel> {
+export async function loadRealModel(): Promise<CarModel> {
   const draco = new DRACOLoader();
-  draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+  // 打包在專案裡，不依賴外部 CDN（避免離線/網路受限環境載入失敗）
+  draco.setDecoderPath('draco/');
   const loader = new GLTFLoader();
   loader.setDRACOLoader(draco);
 
@@ -47,8 +66,8 @@ async function loadGltf(): Promise<CarModel> {
   const center = box2.getCenter(new THREE.Vector3());
   gltf.scene.position.sub(new THREE.Vector3(center.x, box2.min.y, center.z));
 
-  const bodyMaterials: THREE.MeshStandardMaterial[] = [];
-  const roofMaterials: THREE.MeshStandardMaterial[] = [];
+  const bodyMaterials: THREE.MeshPhysicalMaterial[] = [];
+  const roofMaterials: THREE.MeshPhysicalMaterial[] = [];
   const paintableMeshes: THREE.Mesh[] = [];
   const meshInfo: { mesh: string; material: string }[] = [];
 
@@ -74,7 +93,7 @@ async function loadGltf(): Promise<CarModel> {
     if (!isRoof && !isBody) return;
 
     if (isRoof) {
-      const cloned = mats.map((m) => (m as THREE.MeshStandardMaterial).clone());
+      const cloned = mats.map((m) => toPhysical(m));
       mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0];
       roofMaterials.push(...cloned);
       paintableMeshes.push(mesh);
@@ -86,13 +105,11 @@ async function loadGltf(): Promise<CarModel> {
   if (paintMeshes.length > 0) {
     // 車頂沒有獨立分件時：依世界座標高度把漆面三角形切成車身/車頂兩組，
     // 讓雙色車型（黑車頂）能運作
-    const srcMat = (
-      Array.isArray(paintMeshes[0].material)
-        ? paintMeshes[0].material[0]
-        : paintMeshes[0].material
-    ) as THREE.MeshStandardMaterial;
-    const bodyMat = srcMat.clone();
-    const roofMat = srcMat.clone();
+    const firstMat = Array.isArray(paintMeshes[0].material)
+      ? paintMeshes[0].material[0]
+      : paintMeshes[0].material;
+    const bodyMat = toPhysical(firstMat);
+    const roofMat = toPhysical(firstMat);
     bodyMaterials.push(bodyMat);
     if (roofMaterials.length === 0) roofMaterials.push(roofMat);
 
@@ -122,8 +139,9 @@ async function loadGltf(): Promise<CarModel> {
       const wide = bb.max.x - bb.min.x > carW * 0.55;
       const long = bb.max.z - bb.min.z > carL * 0.4;
       if (!nearTop || !wide || !long) return;
-      const keepMat = mats[0] as THREE.MeshStandardMaterial;
-      const roofPanelMat = keepMat.clone();
+      // 各自 clone 一份，避免共用材質意外連動到其他未偵測到的部件
+      const keepMat = toPhysical(mats[0]);
+      const roofPanelMat = toPhysical(mats[0]);
       splitMeshByHeight(mesh, roofY, keepMat, roofPanelMat);
       roofMaterials.push(roofPanelMat);
       paintableMeshes.push(mesh);
@@ -149,9 +167,7 @@ async function loadGltf(): Promise<CarModel> {
     });
     if (biggest) {
       const b = biggest as THREE.Mesh;
-      const mats = (Array.isArray(b.material) ? b.material : [b.material]).map(
-        (m) => (m as THREE.MeshStandardMaterial).clone(),
-      );
+      const mats = (Array.isArray(b.material) ? b.material : [b.material]).map((m) => toPhysical(m));
       b.material = Array.isArray(b.material) ? mats : mats[0];
       bodyMaterials.push(...mats);
       paintableMeshes.push(b);
@@ -159,7 +175,7 @@ async function loadGltf(): Promise<CarModel> {
     }
   }
 
-  return { root, bodyMaterials, roofMaterials, paintableMeshes, isPlaceholder: false };
+  return { root, bodyMaterials, roofMaterials, paintableMeshes, isKid: false };
 }
 
 // 依三角形重心的世界高度，把 mesh 的 index 重排成「車身 / 車頂」兩個 group，
@@ -195,17 +211,26 @@ function splitMeshByHeight(
   mesh.material = [bodyMat, roofMat];
 }
 
+function applyPaintToMaterial(mat: THREE.MeshPhysicalMaterial, hex: string, m: PaintOption['material']) {
+  mat.color.set(hex);
+  mat.metalness = m.metalness;
+  mat.roughness = m.roughness;
+  mat.clearcoat = m.clearcoat;
+  mat.clearcoatRoughness = m.clearcoatRoughness;
+  mat.needsUpdate = true;
+}
+
 export function applyPaint(model: CarModel, paint: PaintOption) {
-  for (const mat of model.bodyMaterials) mat.color.set(paint.body);
-  const roofColor = paint.roof ?? paint.body;
-  for (const mat of model.roofMaterials) mat.color.set(roofColor);
+  for (const mat of model.bodyMaterials) applyPaintToMaterial(mat, paint.bodyHex, paint.material);
+  const roofHex = paint.isTwoTone ? paint.roofHex : paint.bodyHex;
+  for (const mat of model.roofMaterials) applyPaintToMaterial(mat, roofHex, paint.material);
 }
 
 // ---------------------------------------------------------------------------
-// 佔位模型：方塊風格 JB74，車身與車頂分件，供在取得正式模型前完整測試功能
+// 小朋友版：方塊玩具風 JB74，車身與車頂分件，操作最簡單、外觀最可愛
 // ---------------------------------------------------------------------------
 
-function buildPlaceholder(): CarModel {
+export function buildKidModel(): CarModel {
   const root = new THREE.Group();
 
   const bodyMat = new THREE.MeshPhysicalMaterial({
@@ -300,6 +325,6 @@ function buildPlaceholder(): CarModel {
     bodyMaterials: [bodyMat],
     roofMaterials: [roofMat],
     paintableMeshes,
-    isPlaceholder: true,
+    isKid: true,
   };
 }

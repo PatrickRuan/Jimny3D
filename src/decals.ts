@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import type { Viewer } from './viewer';
 import type { CarModel } from './model';
+import { isTextSticker, buildTextStickerSvg } from './textSticker';
 
 export interface PlacedDecal {
   stickerId: string;
@@ -316,21 +317,38 @@ export class DecalManager {
     return mesh;
   }
 
+  private async resolveTextureUrl(stickerId: string): Promise<string> {
+    if (isTextSticker(stickerId)) {
+      return `data:image/svg+xml;utf8,${encodeURIComponent(buildTextStickerSvg(stickerId))}`;
+    }
+    const atIdx = stickerId.indexOf('@');
+    if (atIdx === -1) return `stickers/${stickerId}.svg`;
+    // 換色貼紙：baseId@色碼，把原始 SVG 的白色部分替換成指定顏色
+    const baseId = stickerId.slice(0, atIdx);
+    const color = stickerId.slice(atIdx + 1);
+    const raw = await fetch(`stickers/${baseId}.svg`).then((r) => r.text());
+    const recolored = raw.replace(/#ffffff/gi, `#${color}`);
+    return `data:image/svg+xml;utf8,${encodeURIComponent(recolored)}`;
+  }
+
   private loadTexture(stickerId: string): Promise<THREE.Texture> {
     const cached = this.textureCache.get(stickerId);
     if (cached) return Promise.resolve(cached);
-    return new Promise((resolve, reject) => {
-      new THREE.TextureLoader().load(
-        `stickers/${stickerId}.svg`,
-        (tex) => {
-          tex.colorSpace = THREE.SRGBColorSpace;
-          tex.anisotropy = 8;
-          this.textureCache.set(stickerId, tex);
-          resolve(tex);
-        },
-        undefined,
-        reject,
-      );
-    });
+    return this.resolveTextureUrl(stickerId).then(
+      (url) =>
+        new Promise<THREE.Texture>((resolve, reject) => {
+          new THREE.TextureLoader().load(
+            url,
+            (tex) => {
+              tex.colorSpace = THREE.SRGBColorSpace;
+              tex.anisotropy = 8;
+              this.textureCache.set(stickerId, tex);
+              resolve(tex);
+            },
+            undefined,
+            reject,
+          );
+        }),
+    );
   }
 }
