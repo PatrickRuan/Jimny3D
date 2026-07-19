@@ -253,7 +253,7 @@ export async function loadRealModel(): Promise<CarModel> {
     }
   }
 
-  // --- 可改色的既有零件（輪圈、後視鏡……）------------------------------------
+  // --- 可改色的既有零件（輪圈、鍍鉻飾件……）----------------------------------
   const customParts: CustomPart[] = [];
   for (const def of CUSTOM_PARTS) {
     const meshes: THREE.Mesh[] = [];
@@ -262,7 +262,9 @@ export async function loadRealModel(): Promise<CarModel> {
       if (!(obj as THREE.Mesh).isMesh) return;
       const mesh = obj as THREE.Mesh;
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      const hit = mats.find((m) => def.materialNames.includes(m.name));
+      const hit = def.meshNames?.includes(mesh.name)
+        ? mats[0]
+        : mats.find((m) => def.materialNames?.includes(m.name));
       if (!hit) return;
       meshes.push(mesh);
       if (!sample) sample = hit;
