@@ -38,6 +38,7 @@ export class DecalManager {
   private previewMesh: THREE.Mesh | null = null;
   private textureCache = new Map<string, THREE.Texture>();
   private downPos: { x: number; y: number } | null = null;
+  private lastPreviewAt = 0;
 
   private viewer: Viewer;
   private getModel: () => CarModel | null;
@@ -167,6 +168,10 @@ export class DecalManager {
 
   private onPointerMove(e: PointerEvent) {
     if (!this.placingStickerId) return;
+    // 高面數模型上重建 DecalGeometry 成本高，預覽節流
+    const now = performance.now();
+    if (now - this.lastPreviewAt < 90) return;
+    this.lastPreviewAt = now;
     const hit = this.raycastCar(e);
     this.removePreview();
     if (!hit || !hit.face) return;

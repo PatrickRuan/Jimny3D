@@ -52,10 +52,14 @@ async function loadGltf(): Promise<CarModel> {
   const paintableMeshes: THREE.Mesh[] = [];
   const meshInfo: { mesh: string; material: string }[] = [];
 
-  const bodyRe = /body|carroceria|paint|shell|exterior|车身|hood|door|fender/i;
-  const roofRe = /roof|top(?!olog)/i;
-  const excludeRe = /glass|window|tire|tyre|wheel|light|lamp|interior|seat|chrome|mirror|grille|bumper|plate/i;
+  // pintura/carroceria = 葡文車漆/車身（Sketchfab 上不少車模用葡文命名）
+  const bodyRe = /pintura|body|carroceria|paint|shell|exterior|车身|hood|door|fender/i;
+  const roofRe = /roof|teto|top(?!olog)/i;
+  const excludeRe = /glass|window|vidro|tire|tyre|pneu|wheel|roda|light|lamp|farol|lanterna|interior|interno|seat|chrome|cromado|mirror|espelho|grille|bumper|plate|refle/i;
 
+  gltf.scene.updateMatrixWorld(true);
+
+  const paintMeshes: THREE.Mesh[] = [];
   gltf.scene.traverse((obj) => {
     if (!(obj as THREE.Mesh).isMesh) return;
     const mesh = obj as THREE.Mesh;
@@ -69,12 +73,62 @@ async function loadGltf(): Promise<CarModel> {
     const isBody = bodyRe.test(label);
     if (!isRoof && !isBody) return;
 
-    // clone material，避免共用材質被一起染色
-    const cloned = mats.map((m) => (m as THREE.MeshStandardMaterial).clone());
-    mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0];
-    (isRoof ? roofMaterials : bodyMaterials).push(...cloned);
-    paintableMeshes.push(mesh);
+    if (isRoof) {
+      const cloned = mats.map((m) => (m as THREE.MeshStandardMaterial).clone());
+      mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0];
+      roofMaterials.push(...cloned);
+      paintableMeshes.push(mesh);
+    } else {
+      paintMeshes.push(mesh);
+    }
   });
+
+  if (paintMeshes.length > 0) {
+    // 車頂沒有獨立分件時：依世界座標高度把漆面三角形切成車身/車頂兩組，
+    // 讓雙色車型（黑車頂）能運作
+    const srcMat = (
+      Array.isArray(paintMeshes[0].material)
+        ? paintMeshes[0].material[0]
+        : paintMeshes[0].material
+    ) as THREE.MeshStandardMaterial;
+    const bodyMat = srcMat.clone();
+    const roofMat = srcMat.clone();
+    bodyMaterials.push(bodyMat);
+    if (roofMaterials.length === 0) roofMaterials.push(roofMat);
+
+    const bbox = new THREE.Box3();
+    for (const mesh of paintMeshes) bbox.expandByObject(mesh);
+    const roofY = bbox.min.y + (bbox.max.y - bbox.min.y) * 0.9;
+
+    for (const mesh of paintMeshes) {
+      splitMeshByHeight(mesh, roofY, bodyMat, roofMat);
+      paintableMeshes.push(mesh);
+    }
+
+    // 有些模型（如此 Sierra 模型）的車頂外皮做在獨立的塑料材質上：
+    // 用幾何特徵（大面積 + 到達車頂高度）找出來，車頂線以上的三角形一起納入車頂色
+    const carBox = new THREE.Box3().setFromObject(gltf.scene);
+    const carW = carBox.max.x - carBox.min.x;
+    const carL = carBox.max.z - carBox.min.z;
+    gltf.scene.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || paintableMeshes.includes(mesh)) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      if (excludeRe.test(`${mesh.name} ${mats.map((m) => m.name).join(' ')}`)) return;
+      mesh.geometry.computeBoundingBox();
+      const bb = mesh.geometry.boundingBox!.clone().applyMatrix4(mesh.matrixWorld);
+      // 以車頂線為基準（不用全車最高點——天線/行李架會把它拉高）
+      const nearTop = bb.max.y > roofY + 0.03;
+      const wide = bb.max.x - bb.min.x > carW * 0.55;
+      const long = bb.max.z - bb.min.z > carL * 0.4;
+      if (!nearTop || !wide || !long) return;
+      const keepMat = mats[0] as THREE.MeshStandardMaterial;
+      const roofPanelMat = keepMat.clone();
+      splitMeshByHeight(mesh, roofY, keepMat, roofPanelMat);
+      roofMaterials.push(roofPanelMat);
+      paintableMeshes.push(mesh);
+    });
+  }
 
   // 協助調整分類規則：在 console 列出模型結構
   console.info('[Jimny3D] glTF mesh 結構：');
@@ -106,6 +160,39 @@ async function loadGltf(): Promise<CarModel> {
   }
 
   return { root, bodyMaterials, roofMaterials, paintableMeshes, isPlaceholder: false };
+}
+
+// 依三角形重心的世界高度，把 mesh 的 index 重排成「車身 / 車頂」兩個 group，
+// 指派各自的材質，讓沒有分件的模型也能做雙色
+function splitMeshByHeight(
+  mesh: THREE.Mesh,
+  worldY: number,
+  bodyMat: THREE.Material,
+  roofMat: THREE.Material,
+) {
+  const geo = mesh.geometry;
+  const pos = geo.getAttribute('position');
+  if (!geo.getIndex()) {
+    geo.setIndex([...Array(pos.count).keys()]);
+  }
+  const index = geo.getIndex()!;
+  const body: number[] = [];
+  const roof: number[] = [];
+  const v = new THREE.Vector3();
+  for (let i = 0; i < index.count; i += 3) {
+    let cy = 0;
+    for (let k = 0; k < 3; k++) {
+      v.fromBufferAttribute(pos, index.getX(i + k)).applyMatrix4(mesh.matrixWorld);
+      cy += v.y;
+    }
+    const tri = [index.getX(i), index.getX(i + 1), index.getX(i + 2)];
+    (cy / 3 > worldY ? roof : body).push(...tri);
+  }
+  geo.setIndex([...body, ...roof]);
+  geo.clearGroups();
+  geo.addGroup(0, body.length, 0);
+  geo.addGroup(body.length, roof.length, 1);
+  mesh.material = [bodyMat, roofMat];
 }
 
 export function applyPaint(model: CarModel, paint: PaintOption) {

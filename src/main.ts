@@ -1,4 +1,5 @@
 import './style.css';
+import * as THREE from 'three';
 import { createViewer } from './viewer';
 import { loadCarModel, applyPaint, type CarModel } from './model';
 import { DecalManager } from './decals';
@@ -13,6 +14,9 @@ let model: CarModel | null = null;
 let currentPaintId = DEFAULT_PAINT_ID;
 
 const decalManager = new DecalManager(viewer, () => model);
+
+// debug 用：在 console 檢視場景與模型
+(window as unknown as Record<string, unknown>).__debug = { viewer, getModel: () => model, THREE };
 
 const ui = buildUI(app, {
   onPaint(id) {
@@ -73,6 +77,6 @@ loadCarModel(viewer.scene).then(async (m) => {
   ui.setAttribution(
     model.isPlaceholder
       ? '目前為佔位模型 — 將 Sketchfab 下載的 glTF 放到 public/models/jimny.glb 即可替換'
-      : '3D model via Sketchfab (CC-BY) — 詳見專案 README',
+      : '3D model: "2023 Suzuki Jimny Sierra" by tonielpro520 (Sketchfab), CC-BY-4.0',
   );
 });
