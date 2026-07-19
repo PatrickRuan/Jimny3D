@@ -45,6 +45,9 @@ export class DecalManager {
   onSelectionChange: (d: PlacedDecal | null) => void = () => {};
   onPlacingChange: (stickerId: string | null) => void = () => {};
 
+  // 貼紙疊貼紙時的畫面堆疊順序：每貼一張新的就遞增，讓後貼的一定畫在先貼的上面，
+  // 不會因為兩張貼紙剛好用一樣的 polygonOffset/renderOrder 而互相「打架」只顯示一半。
+  private stackCounter = 0;
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
   private helper = new THREE.Object3D();
@@ -168,6 +171,7 @@ export class DecalManager {
       d.mesh.geometry.dispose();
     }
     this.decals = [];
+    this.stackCounter = 0;
     this.select(null);
   }
 
@@ -425,6 +429,9 @@ export class DecalManager {
     aspect: number,
   ): Promise<PlacedDecal> {
     const mesh = await this.makeDecalMesh(stickerId, target, position, normal, rotation, size, aspect, 1);
+    const stack = this.stackCounter++;
+    mesh.renderOrder = 10 + stack;
+    (mesh.material as THREE.MeshStandardMaterial).polygonOffsetFactor = -4 - stack * 0.5;
     this.viewer.scene.add(mesh);
     const d: PlacedDecal = { stickerId, targetIndex, position, normal, rotation, size, aspect, mesh };
     this.decals.push(d);

@@ -10,7 +10,7 @@ import { trackVisit } from './visitor';
 import { buildBackground } from './backgrounds';
 
 const REAL_ATTRIBUTION = '3D model: "2023 Suzuki Jimny Sierra" by tonielpro520 (Sketchfab), CC-BY-4.0';
-const KID_ATTRIBUTION = 'Rax 版 Jimny — 積木玩具風，操作最簡單 🦖';
+const KID_ATTRIBUTION = '小尼可醬版 Jimny — 積木玩具風，操作最簡單 🦖';
 
 const app = document.querySelector<HTMLElement>('#app')!;
 const viewer = createViewer(app);
@@ -159,7 +159,7 @@ async function boot() {
     usingKid
       ? realModel
         ? KID_ATTRIBUTION
-        : '正式模型載入失敗，暫以 Rax 版顯示'
+        : '正式模型載入失敗，暫以小尼可醬版顯示'
       : REAL_ATTRIBUTION,
   );
 }

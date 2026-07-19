@@ -82,8 +82,8 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   const storyBtn = el('button', { id: 'btn-story', title: '這個網站是怎麼做出來的？' }, ['🛠️ 開發全紀錄']);
   const modBtn = el('button', { id: 'btn-mod', title: '零件改色' }, ['🔧 改裝']);
   const bgBtn = el('button', { id: 'btn-bg', title: '換場景背景' }, ['🎨 背景']);
-  const kidBtn = el('button', { id: 'btn-kid', class: 'kid-toggle', title: '切換成 Rax 版玩具車' }, [
-    '🦖 Rax Jimny',
+  const kidBtn = el('button', { id: 'btn-kid', class: 'kid-toggle', title: '切換成小尼可醬版玩具車' }, [
+    '🦖 小尼可醬 Jimny',
   ]);
   shotBtn.addEventListener('click', () => cb.onScreenshot());
   shareBtn.addEventListener('click', () => cb.onShare());
@@ -385,7 +385,7 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
     setCustomParts(parts) {
       modList.replaceChildren();
       if (parts.length === 0) {
-        modList.append(el('p', { class: 'mod-empty' }, ['這個模型沒有可改色的零件（Rax 版沒有零件資料）']));
+        modList.append(el('p', { class: 'mod-empty' }, ['這個模型沒有可改色的零件（小尼可醬版沒有零件資料）']));
         return;
       }
       for (const part of parts) {

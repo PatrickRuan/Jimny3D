@@ -30,7 +30,7 @@ export interface CarModel {
   paintableMeshes: THREE.Mesh[];
   /** 可獨立改色的既有零件（輪圈、後視鏡……），依 src/parts.ts 定義 */
   customParts: CustomPart[];
-  /** true = Rax 版積木模型 */
+  /** true = 小尼可醬版積木模型 */
   isKid: boolean;
 }
 
@@ -315,6 +315,9 @@ export async function loadRealModel(): Promise<CarModel> {
     gltf.scene.traverse((obj) => {
       if (!(obj as THREE.Mesh).isMesh) return;
       const mesh = obj as THREE.Mesh;
+      // 車頂殼（跟輪圈共用同一份材質名稱）已經在上面獨立處理過，不能再被這裡搶走材質，
+      // 不然車頂會變成沒有任何 mesh 在用的孤兒材質，調它的顏色完全沒有畫面效果。
+      if (paintableMeshes.includes(mesh)) return;
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       const hit = mats.find((m) => def.materialNames.includes(m.name));
       if (!hit) return;
@@ -392,7 +395,7 @@ export function applyPartColor(model: CarModel, partId: string, hex: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Rax 版：方塊玩具風 JB74，車身與車頂分件，操作最簡單、外觀最可愛
+// 小尼可醬版：方塊玩具風 JB74，車身與車頂分件，操作最簡單、外觀最可愛
 // ---------------------------------------------------------------------------
 
 export function buildKidModel(): CarModel {
