@@ -495,6 +495,11 @@ export class DecalManager {
     if (isTextSticker(stickerId)) {
       return `data:image/svg+xml;utf8,${encodeURIComponent(buildTextStickerSvg(stickerId))}`;
     }
+    if (stickerId.startsWith('upload:')) {
+      // 使用者上傳的自訂貼紙圖片：整張圖（已縮圖）編碼進 stickerId 本身，
+      // 跟文字貼紙同樣道理，分享連結不需要額外的伺服器就能還原
+      return decodeURIComponent(stickerId.slice('upload:'.length));
+    }
     const atIdx = stickerId.indexOf('@');
     if (atIdx === -1) return `stickers/${stickerId}.svg`;
     // 換色貼紙：baseId@色碼，把原始 SVG 的白色部分替換成指定顏色

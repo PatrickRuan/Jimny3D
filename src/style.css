@@ -364,6 +364,47 @@ button.danger {
   line-height: 1.5;
 }
 
+.bg-panel {
+  position: absolute;
+  left: 16px;
+  top: 70px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 14px 16px;
+  border-radius: 14px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+  z-index: 11;
+  width: 200px;
+}
+
+.bg-panel h3 {
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.bg-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bg-swatch {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  box-shadow: none;
+}
+
+.bg-swatch.active {
+  outline: 3px solid #4a7c3a;
+  outline-offset: 2px;
+}
+
+.upload-toggle {
+  font-size: 18px;
+}
+
 .attribution {
   position: absolute;
   left: 12px;

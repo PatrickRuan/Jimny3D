@@ -3,13 +3,21 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { PaintOption } from './colors';
-import { ROOF_SHELL_MESH_NAMES, BODY_PAINT_MATERIAL_NAME, CUSTOM_PARTS } from './parts';
+import {
+  ROOF_SHELL_MESH_NAMES,
+  BODY_PAINT_MATERIAL_NAME,
+  WINDOW_MATERIAL_NAMES,
+  MASKED_PARTS,
+  type MaskRegion,
+} from './parts';
 
 export interface CustomPart {
   id: string;
   label: string;
   material: THREE.MeshPhysicalMaterial;
   defaultHex: string;
+  /** 有值代表這個零件是用世界座標遮罩上色（見 createMaskedMaterial），顏色要寫這個 uniform 而不是 material.color */
+  uniformColor?: { value: THREE.Color };
 }
 
 export interface CarModel {
@@ -22,7 +30,7 @@ export interface CarModel {
   paintableMeshes: THREE.Mesh[];
   /** 可獨立改色的既有零件（輪圈、後視鏡……），依 src/parts.ts 定義 */
   customParts: CustomPart[];
-  /** true = 小尼可醬版積木模型 */
+  /** true = Rax 版積木模型 */
   isKid: boolean;
 }
 
@@ -67,6 +75,52 @@ function createTwoToneMaterial(src: THREE.Material, roofY: number, followBody: b
       );
   };
   return { material: mat, uniforms, followBody };
+}
+
+// 世界座標範圍上色：不管幾何被切成幾個破碎的 mesh（這個模型的輪圈/銘牌材質
+// 都跟不相干的零件混在一起），只要三角形落在指定橢球範圍內就染成指定色，範圍外維持原色。
+// 跟車頂/車身的 shader 手法同源，只是判定條件從「高度」換成「到中心點的橢球距離」。
+function createMaskedMaterial(
+  src: THREE.Material,
+  regions: MaskRegion[],
+): { material: THREE.MeshPhysicalMaterial; uniformColor: { value: THREE.Color } } {
+  const mat = toPhysical(src);
+  const uniformColor = { value: mat.color.clone() };
+  const centers = regions.map((r) => new THREE.Vector3(r.cx, r.cy, r.cz));
+  const radii = regions.map((r) => new THREE.Vector3(r.rx, r.ry, r.rz));
+  const n = regions.length;
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uMaskColor = uniformColor;
+    shader.uniforms.uCenters = { value: centers };
+    shader.uniforms.uRadii = { value: radii };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPosMask;')
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvWorldPosMask = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>\nvarying vec3 vWorldPosMask;\nuniform vec3 uMaskColor;\nuniform vec3 uCenters[${n}];\nuniform vec3 uRadii[${n}];`,
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>\n{
+          float m = 0.0;
+          for (int i = 0; i < ${n}; i++) {
+            vec3 d = (vWorldPosMask - uCenters[i]) / uRadii[i];
+            float r = length(d);
+            m = max(m, 1.0 - smoothstep(0.85, 1.05, r));
+          }
+          diffuseColor.rgb = mix(diffuseColor.rgb, uMaskColor, m);
+        }`,
+      );
+  };
+  // 不同零件的區域數量不同（n），shader 原始碼跟著不同；沒有這行 three.js 的 program
+  // cache 會誤判成同一支 shader 重複使用，導致 uCenters/uRadii 陣列長度對不上而噴錯。
+  mat.customProgramCacheKey = () => `masked-region-${n}`;
+  return { material: mat, uniformColor };
 }
 
 const MODEL_URL = 'models/jimny.glb';
@@ -253,27 +307,51 @@ export async function loadRealModel(): Promise<CarModel> {
     }
   }
 
-  // --- 可改色的既有零件（輪圈、鍍鉻飾件……）----------------------------------
+  // --- 可改色的既有零件：輪圈、鍍鉻銘牌（世界座標遮罩，見 src/parts.ts）--------
   const customParts: CustomPart[] = [];
-  for (const def of CUSTOM_PARTS) {
+  for (const def of MASKED_PARTS) {
     const meshes: THREE.Mesh[] = [];
     let sample: THREE.Material | null = null;
     gltf.scene.traverse((obj) => {
       if (!(obj as THREE.Mesh).isMesh) return;
       const mesh = obj as THREE.Mesh;
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      const hit = def.meshNames?.includes(mesh.name)
-        ? mats[0]
-        : mats.find((m) => def.materialNames?.includes(m.name));
+      const hit = mats.find((m) => def.materialNames.includes(m.name));
       if (!hit) return;
       meshes.push(mesh);
       if (!sample) sample = hit;
     });
     if (meshes.length === 0 || !sample) continue;
-    const mat = toPhysical(sample);
-    for (const mesh of meshes) mesh.material = mat;
-    customParts.push({ id: def.id, label: def.label, material: mat, defaultHex: `#${mat.color.getHexString()}` });
+    const { material, uniformColor } = createMaskedMaterial(sample, def.regions);
+    for (const mesh of meshes) mesh.material = material;
+    customParts.push({
+      id: def.id,
+      label: def.label,
+      material,
+      uniformColor,
+      defaultHex: `#${uniformColor.value.getHexString()}`,
+    });
   }
+
+  // 車頂也開放在改裝面板獨立改色（很多人改車就是只換車頂色，跟原廠雙色設定分開處理）
+  if (roofMaterials.length > 0) {
+    customParts.push({
+      id: 'roof',
+      label: '車頂',
+      material: roofMaterials[0],
+      defaultHex: `#${roofMaterials[0].color.getHexString()}`,
+    });
+  }
+
+  // --- 車窗玻璃：不上漆，但加進貼紙可點選範圍，讓後擋風玻璃也能貼貼紙 -----------
+  gltf.scene.traverse((obj) => {
+    if (!(obj as THREE.Mesh).isMesh) return;
+    const mesh = obj as THREE.Mesh;
+    if (paintableMeshes.includes(mesh)) return;
+    if (!meshMaterialNames(mesh).some((n) => WINDOW_MATERIAL_NAMES.includes(n))) return;
+    mesh.castShadow = false;
+    paintableMeshes.push(mesh);
+  });
 
   return { root, bodyMaterials, roofMaterials, twoToneMaterials, paintableMeshes, customParts, isKid: false };
 }
@@ -305,12 +383,16 @@ export function applyPaint(model: CarModel, paint: PaintOption) {
 export function applyPartColor(model: CarModel, partId: string, hex: string) {
   const part = model.customParts.find((p) => p.id === partId);
   if (!part) return;
-  part.material.color.set(hex);
-  part.material.needsUpdate = true;
+  if (part.uniformColor) {
+    part.uniformColor.value.set(hex);
+  } else {
+    part.material.color.set(hex);
+    part.material.needsUpdate = true;
+  }
 }
 
 // ---------------------------------------------------------------------------
-// 小尼可醬版：方塊玩具風 JB74，車身與車頂分件，操作最簡單、外觀最可愛
+// Rax 版：方塊玩具風 JB74，車身與車頂分件，操作最簡單、外觀最可愛
 // ---------------------------------------------------------------------------
 
 export function buildKidModel(): CarModel {
@@ -409,7 +491,7 @@ export function buildKidModel(): CarModel {
     roofMaterials: [roofMat],
     twoToneMaterials: [],
     paintableMeshes,
-    customParts: [],
+    customParts: [{ id: 'roof', label: '車頂', material: roofMat, defaultHex: `#${roofMat.color.getHexString()}` }],
     isKid: true,
   };
 }

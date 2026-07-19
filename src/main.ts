@@ -7,9 +7,10 @@ import { encodeStateToHash, decodeStateFromHash } from './share';
 import { encodeTextSticker } from './textSticker';
 import { buildUI, type UIPart } from './ui';
 import { trackVisit } from './visitor';
+import { buildBackground } from './backgrounds';
 
 const REAL_ATTRIBUTION = '3D model: "2023 Suzuki Jimny Sierra" by tonielpro520 (Sketchfab), CC-BY-4.0';
-const KID_ATTRIBUTION = '小尼可醬版 Jimny — 積木玩具風，操作最簡單 🧸';
+const KID_ATTRIBUTION = 'Rax 版 Jimny — 積木玩具風，操作最簡單 🦖';
 
 const app = document.querySelector<HTMLElement>('#app')!;
 const viewer = createViewer(app);
@@ -22,11 +23,15 @@ let currentPaintId = DEFAULT_PAINT_ID;
 
 const decalManager = new DecalManager(viewer, () => model, app);
 
+function partCurrentHex(p: CarModel['customParts'][number]): string {
+  return `#${(p.uniformColor?.value ?? p.material.color).getHexString()}`;
+}
+
 function refreshCustomPartsUI() {
   const parts: UIPart[] = (model?.customParts ?? []).map((p) => ({
     id: p.id,
     label: p.label,
-    hex: `#${p.material.color.getHexString()}`,
+    hex: partCurrentHex(p),
     defaultHex: p.defaultHex,
   }));
   ui.setCustomParts(parts);
@@ -103,7 +108,7 @@ const ui = buildUI(app, {
   },
   onShare() {
     const partColors: Record<string, string> = {};
-    for (const p of model?.customParts ?? []) partColors[p.id] = `#${p.material.color.getHexString()}`;
+    for (const p of model?.customParts ?? []) partColors[p.id] = partCurrentHex(p);
     const hash = encodeStateToHash({ c: currentPaintId, d: decalManager.serialize(), p: partColors });
     const url = `${location.origin}${location.pathname}${hash}`;
     history.replaceState(null, '', hash);
@@ -117,6 +122,9 @@ const ui = buildUI(app, {
   },
   onPartColorChange(partId, hex) {
     if (model) applyPartColor(model, partId, hex);
+  },
+  onBackgroundChange(id) {
+    viewer.scene.background = buildBackground(id);
   },
 });
 
@@ -151,7 +159,7 @@ async function boot() {
     usingKid
       ? realModel
         ? KID_ATTRIBUTION
-        : '正式模型載入失敗，暫以小尼可醬版顯示'
+        : '正式模型載入失敗，暫以 Rax 版顯示'
       : REAL_ATTRIBUTION,
   );
 }

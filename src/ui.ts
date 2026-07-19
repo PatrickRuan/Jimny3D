@@ -2,6 +2,7 @@ import { PAINTS } from './colors';
 import type { PlacedDecal } from './decals';
 import { STICKER_FONTS, buildTextStickerSvg, encodeTextSticker, NO_STROKE } from './textSticker';
 import { STORY_INTRO, STORY_SECTIONS, STORY_OUTRO } from './story';
+import { BACKGROUND_PRESETS, DEFAULT_BACKGROUND_ID } from './backgrounds';
 
 export const STICKERS: { id: string; name: string }[] = [
   { id: 'jimny-text', name: 'JIMNY 字樣' },
@@ -39,6 +40,7 @@ export interface UICallbacks {
   onShare(): void;
   onKidToggle(): void;
   onPartColorChange(partId: string, hex: string): void;
+  onBackgroundChange(id: string): void;
 }
 
 export interface UIPart {
@@ -79,8 +81,9 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   const shareBtn = el('button', { id: 'btn-share' }, ['🔗 分享連結']);
   const storyBtn = el('button', { id: 'btn-story', title: '這個網站是怎麼做出來的？' }, ['🛠️ 開發全紀錄']);
   const modBtn = el('button', { id: 'btn-mod', title: '零件改色' }, ['🔧 改裝']);
-  const kidBtn = el('button', { id: 'btn-kid', class: 'kid-toggle', title: '切換成小尼可醬版玩具車' }, [
-    '🧸 小尼可醬 Jimny',
+  const bgBtn = el('button', { id: 'btn-bg', title: '換場景背景' }, ['🎨 背景']);
+  const kidBtn = el('button', { id: 'btn-kid', class: 'kid-toggle', title: '切換成 Rax 版玩具車' }, [
+    '🦖 Rax Jimny',
   ]);
   shotBtn.addEventListener('click', () => cb.onScreenshot());
   shareBtn.addEventListener('click', () => cb.onShare());
@@ -91,9 +94,29 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   root.append(
     el('header', { class: 'topbar' }, [
       brand,
-      el('div', { class: 'actions' }, [modBtn, storyBtn, shotBtn, shareBtn]),
+      el('div', { class: 'actions' }, [bgBtn, modBtn, storyBtn, shotBtn, shareBtn]),
     ]),
   );
+
+  // --- 場景背景面板 ---------------------------------------------------------
+  const bgList = el('div', { class: 'bg-list' });
+  for (const preset of BACKGROUND_PRESETS) {
+    const swatch = el('button', { class: 'bg-swatch', 'data-id': preset.id, title: preset.label });
+    swatch.style.background = preset.css;
+    if (preset.id === DEFAULT_BACKGROUND_ID) swatch.classList.add('active');
+    swatch.addEventListener('click', () => {
+      bgList.querySelectorAll('.bg-swatch').forEach((n) => n.classList.remove('active'));
+      swatch.classList.add('active');
+      cb.onBackgroundChange(preset.id);
+    });
+    bgList.append(swatch);
+  }
+  const bgPanel = el('div', { class: 'bg-panel', hidden: '' }, [el('h3', {}, ['場景背景']), bgList]);
+  root.append(bgPanel);
+  bgBtn.addEventListener('click', () => {
+    bgPanel.hidden = !bgPanel.hidden;
+    if (!bgPanel.hidden) modPanel.hidden = true;
+  });
 
   // --- 「這個網站怎麼做出來的」面板 -------------------------------------
   const storySections = STORY_SECTIONS.map((s) =>
@@ -134,6 +157,7 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   root.append(modPanel);
   modBtn.addEventListener('click', () => {
     modPanel.hidden = !modPanel.hidden;
+    if (!modPanel.hidden) bgPanel.hidden = true;
   });
 
   const hint = el('div', { class: 'hint', hidden: '' }, ['點擊車身貼上貼紙（Esc 取消）']);
@@ -219,6 +243,38 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
     ['Aa'],
   );
   stickersEl.append(textToggleBtn);
+
+  // --- 上傳自訂貼紙 -----------------------------------------------------
+  const uploadInput = el('input', { type: 'file', accept: 'image/*', class: 'upload-input', hidden: '' });
+  const uploadBtn = el(
+    'button',
+    { class: 'sticker upload-toggle', 'data-id': 'upload', title: '上傳自訂貼紙圖片' },
+    ['📤'],
+  );
+  uploadBtn.addEventListener('click', () => uploadInput.click());
+  uploadInput.addEventListener('change', async () => {
+    const file = uploadInput.files?.[0];
+    uploadInput.value = '';
+    if (!file) return;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const maxDim = 360;
+      const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/png');
+      cb.onStickerPick(`upload:${encodeURIComponent(dataUrl)}`);
+    } catch (err) {
+      console.warn('[Jimny3D] 圖片讀取失敗：', err);
+    }
+  });
+  stickersEl.append(uploadBtn, uploadInput);
+
   root.append(el('footer', { class: 'dock' }, [paintsEl, stickersEl]));
 
   const textInput = el('input', {
@@ -329,7 +385,7 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
     setCustomParts(parts) {
       modList.replaceChildren();
       if (parts.length === 0) {
-        modList.append(el('p', { class: 'mod-empty' }, ['這個模型沒有可改色的零件（小尼可醬版沒有零件資料）']));
+        modList.append(el('p', { class: 'mod-empty' }, ['這個模型沒有可改色的零件（Rax 版沒有零件資料）']));
         return;
       }
       for (const part of parts) {
