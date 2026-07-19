@@ -11,6 +11,7 @@ export interface PlacedDecal {
   normal: THREE.Vector3;
   rotation: number; // 沿法線的旋轉角
   size: number;
+  aspect: number; // 寬/高比，1 = 正方形
   mesh: THREE.Mesh;
 }
 
@@ -21,9 +22,11 @@ export interface SerializedDecal {
   n: number[];
   r: number;
   w: number;
+  a: number;
 }
 
 const DEFAULT_SIZE = 0.45;
+const DEFAULT_ASPECT = 1;
 
 export class DecalManager {
   decals: PlacedDecal[] = [];
@@ -93,6 +96,12 @@ export class DecalManager {
     this.rebuild(this.selected);
   }
 
+  setSelectedAspect(aspect: number) {
+    if (!this.selected) return;
+    this.selected.aspect = aspect;
+    this.rebuild(this.selected);
+  }
+
   deleteSelected() {
     if (!this.selected) return;
     const d = this.selected;
@@ -120,6 +129,7 @@ export class DecalManager {
       n: d.normal.toArray().map(r3),
       r: r3(d.rotation),
       w: r3(d.size),
+      a: r3(d.aspect),
     }));
   }
 
@@ -138,6 +148,7 @@ export class DecalManager {
         new THREE.Vector3().fromArray(item.n),
         item.r,
         item.w,
+        item.a ?? DEFAULT_ASPECT,
       );
     }
   }
@@ -188,6 +199,7 @@ export class DecalManager {
       normal,
       0,
       DEFAULT_SIZE,
+      DEFAULT_ASPECT,
       0.55,
     ).then((mesh) => {
       if (!this.placingStickerId) return;
@@ -225,6 +237,7 @@ export class DecalManager {
         normal,
         0,
         DEFAULT_SIZE,
+        DEFAULT_ASPECT,
       );
       this.select(d);
       return;
@@ -253,10 +266,11 @@ export class DecalManager {
     normal: THREE.Vector3,
     rotation: number,
     size: number,
+    aspect: number,
   ): Promise<PlacedDecal> {
-    const mesh = await this.makeDecalMesh(stickerId, target, position, normal, rotation, size, 1);
+    const mesh = await this.makeDecalMesh(stickerId, target, position, normal, rotation, size, aspect, 1);
     this.viewer.scene.add(mesh);
-    const d: PlacedDecal = { stickerId, targetIndex, position, normal, rotation, size, mesh };
+    const d: PlacedDecal = { stickerId, targetIndex, position, normal, rotation, size, aspect, mesh };
     this.decals.push(d);
     return d;
   }
@@ -266,7 +280,7 @@ export class DecalManager {
     const target = model?.paintableMeshes[d.targetIndex];
     if (!target) return;
     const old = d.mesh.geometry;
-    d.mesh.geometry = this.buildGeometry(target, d.position, d.normal, d.rotation, d.size);
+    d.mesh.geometry = this.buildGeometry(target, d.position, d.normal, d.rotation, d.size, d.aspect);
     old.dispose();
   }
 
@@ -276,16 +290,19 @@ export class DecalManager {
     normal: THREE.Vector3,
     rotation: number,
     size: number,
+    aspect: number,
   ): DecalGeometry {
     target.updateMatrixWorld();
     this.helper.position.copy(position);
     this.helper.lookAt(position.clone().add(normal));
     this.helper.rotation.z += rotation;
+    const width = size * Math.sqrt(aspect);
+    const height = size / Math.sqrt(aspect);
     return new DecalGeometry(
       target,
       position,
       this.helper.rotation.clone(),
-      new THREE.Vector3(size, size, Math.max(size * 0.5, 0.1)),
+      new THREE.Vector3(width, height, Math.max(size * 0.5, 0.1)),
     );
   }
 
@@ -296,6 +313,7 @@ export class DecalManager {
     normal: THREE.Vector3,
     rotation: number,
     size: number,
+    aspect: number,
     opacity: number,
   ): Promise<THREE.Mesh> {
     const texture = await this.loadTexture(stickerId);
@@ -310,7 +328,7 @@ export class DecalManager {
       metalness: 0.1,
     });
     const mesh = new THREE.Mesh(
-      this.buildGeometry(target, position, normal, rotation, size),
+      this.buildGeometry(target, position, normal, rotation, size, aspect),
       material,
     );
     mesh.renderOrder = 10;

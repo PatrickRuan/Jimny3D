@@ -8,10 +8,57 @@ export interface CarModel {
   root: THREE.Group;
   bodyMaterials: THREE.MeshPhysicalMaterial[];
   roofMaterials: THREE.MeshPhysicalMaterial[];
+  /** 同一份幾何內用 shader 依世界高度分車身/車頂色的材質 */
+  twoToneMaterials: TwoToneMaterial[];
   /** 貼紙 raycast 的目標（車身外板） */
   paintableMeshes: THREE.Mesh[];
   /** true = 小朋友版積木模型 */
   isKid: boolean;
+}
+
+interface TwoToneMaterial {
+  material: THREE.MeshPhysicalMaterial;
+  /** false = 這塊區域的「車身側」顏色維持原樣（例如黑色飾條），不隨換色改變 */
+  followBody: boolean;
+  uniforms: {
+    uBodyColor: { value: THREE.Color };
+    uRoofColor: { value: THREE.Color };
+    uRoofY: { value: number };
+    uEdgeSoftness: { value: number };
+  };
+}
+
+// 車身/車頂雙色交界改用 fragment shader 依世界座標高度做顏色混合，
+// 而不是把三角形逐一分類成兩個 group——後者交界線會沿著模型既有的三角化紋路走，
+// 在鏡頭拉近時看起來像鋸齒；shader 版本的交界永遠是一條數學上乾淨的線，
+// 邊緣再用 smoothstep 做極窄的柔化，本身就自帶抗鋸齒效果。
+function createTwoToneMaterial(src: THREE.Material, roofY: number, followBody: boolean): TwoToneMaterial {
+  const mat = toPhysical(src);
+  const uniforms = {
+    uBodyColor: { value: mat.color.clone() },
+    uRoofColor: { value: mat.color.clone() },
+    uRoofY: { value: roofY },
+    uEdgeSoftness: { value: 0.006 },
+  };
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPosTT;')
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvWorldPosTT = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vWorldPosTT;\nuniform vec3 uBodyColor;\nuniform vec3 uRoofColor;\nuniform float uRoofY;\nuniform float uEdgeSoftness;',
+      )
+      .replace(
+        '#include <color_fragment>',
+        '#include <color_fragment>\n{ float ttT = smoothstep(uRoofY - uEdgeSoftness, uRoofY + uEdgeSoftness, vWorldPosTT.y); diffuseColor.rgb = mix(uBodyColor, uRoofColor, ttT); }',
+      );
+  };
+  return { material: mat, uniforms, followBody };
 }
 
 const MODEL_URL = 'models/jimny.glb';
@@ -68,6 +115,7 @@ export async function loadRealModel(): Promise<CarModel> {
 
   const bodyMaterials: THREE.MeshPhysicalMaterial[] = [];
   const roofMaterials: THREE.MeshPhysicalMaterial[] = [];
+  const twoToneMaterials: TwoToneMaterial[] = [];
   const paintableMeshes: THREE.Mesh[] = [];
   const meshInfo: { mesh: string; material: string }[] = [];
 
@@ -103,27 +151,26 @@ export async function loadRealModel(): Promise<CarModel> {
   });
 
   if (paintMeshes.length > 0) {
-    // 車頂沒有獨立分件時：依世界座標高度把漆面三角形切成車身/車頂兩組，
-    // 讓雙色車型（黑車頂）能運作
+    // 車頂沒有獨立分件時：用 shader 依世界座標高度把漆面分成車身/車頂兩色，
+    // 讓雙色車型（黑車頂）能運作，且交界是乾淨的線而不是鋸齒
     const firstMat = Array.isArray(paintMeshes[0].material)
       ? paintMeshes[0].material[0]
       : paintMeshes[0].material;
-    const bodyMat = toPhysical(firstMat);
-    const roofMat = toPhysical(firstMat);
-    bodyMaterials.push(bodyMat);
-    if (roofMaterials.length === 0) roofMaterials.push(roofMat);
 
     const bbox = new THREE.Box3();
     for (const mesh of paintMeshes) bbox.expandByObject(mesh);
     const roofY = bbox.min.y + (bbox.max.y - bbox.min.y) * 0.9;
 
+    const bodyTT = createTwoToneMaterial(firstMat, roofY, true);
+    twoToneMaterials.push(bodyTT);
     for (const mesh of paintMeshes) {
-      splitMeshByHeight(mesh, roofY, bodyMat, roofMat);
+      mesh.material = bodyTT.material;
       paintableMeshes.push(mesh);
     }
 
     // 有些模型（如此 Sierra 模型）的車頂外皮做在獨立的塑料材質上：
-    // 用幾何特徵（大面積 + 到達車頂高度）找出來，車頂線以上的三角形一起納入車頂色
+    // 用幾何特徵（大面積 + 到達車頂高度）找出來，車頂線以上一併算進車頂色
+    // （車頂線以下維持原色，例如黑色飾條，不隨換色改變）
     const carBox = new THREE.Box3().setFromObject(gltf.scene);
     const carW = carBox.max.x - carBox.min.x;
     const carL = carBox.max.z - carBox.min.z;
@@ -139,11 +186,9 @@ export async function loadRealModel(): Promise<CarModel> {
       const wide = bb.max.x - bb.min.x > carW * 0.55;
       const long = bb.max.z - bb.min.z > carL * 0.4;
       if (!nearTop || !wide || !long) return;
-      // 各自 clone 一份，避免共用材質意外連動到其他未偵測到的部件
-      const keepMat = toPhysical(mats[0]);
-      const roofPanelMat = toPhysical(mats[0]);
-      splitMeshByHeight(mesh, roofY, keepMat, roofPanelMat);
-      roofMaterials.push(roofPanelMat);
+      const trimTT = createTwoToneMaterial(mats[0], roofY, false);
+      twoToneMaterials.push(trimTT);
+      mesh.material = trimTT.material;
       paintableMeshes.push(mesh);
     });
   }
@@ -175,44 +220,10 @@ export async function loadRealModel(): Promise<CarModel> {
     }
   }
 
-  return { root, bodyMaterials, roofMaterials, paintableMeshes, isKid: false };
+  return { root, bodyMaterials, roofMaterials, twoToneMaterials, paintableMeshes, isKid: false };
 }
 
-// 依三角形重心的世界高度，把 mesh 的 index 重排成「車身 / 車頂」兩個 group，
-// 指派各自的材質，讓沒有分件的模型也能做雙色
-function splitMeshByHeight(
-  mesh: THREE.Mesh,
-  worldY: number,
-  bodyMat: THREE.Material,
-  roofMat: THREE.Material,
-) {
-  const geo = mesh.geometry;
-  const pos = geo.getAttribute('position');
-  if (!geo.getIndex()) {
-    geo.setIndex([...Array(pos.count).keys()]);
-  }
-  const index = geo.getIndex()!;
-  const body: number[] = [];
-  const roof: number[] = [];
-  const v = new THREE.Vector3();
-  for (let i = 0; i < index.count; i += 3) {
-    let cy = 0;
-    for (let k = 0; k < 3; k++) {
-      v.fromBufferAttribute(pos, index.getX(i + k)).applyMatrix4(mesh.matrixWorld);
-      cy += v.y;
-    }
-    const tri = [index.getX(i), index.getX(i + 1), index.getX(i + 2)];
-    (cy / 3 > worldY ? roof : body).push(...tri);
-  }
-  geo.setIndex([...body, ...roof]);
-  geo.clearGroups();
-  geo.addGroup(0, body.length, 0);
-  geo.addGroup(body.length, roof.length, 1);
-  mesh.material = [bodyMat, roofMat];
-}
-
-function applyPaintToMaterial(mat: THREE.MeshPhysicalMaterial, hex: string, m: PaintOption['material']) {
-  mat.color.set(hex);
+function applyPhysicalProps(mat: THREE.MeshPhysicalMaterial, m: PaintOption['material']) {
   mat.metalness = m.metalness;
   mat.roughness = m.roughness;
   mat.clearcoat = m.clearcoat;
@@ -220,10 +231,20 @@ function applyPaintToMaterial(mat: THREE.MeshPhysicalMaterial, hex: string, m: P
   mat.needsUpdate = true;
 }
 
+function applyPaintToMaterial(mat: THREE.MeshPhysicalMaterial, hex: string, m: PaintOption['material']) {
+  mat.color.set(hex);
+  applyPhysicalProps(mat, m);
+}
+
 export function applyPaint(model: CarModel, paint: PaintOption) {
   for (const mat of model.bodyMaterials) applyPaintToMaterial(mat, paint.bodyHex, paint.material);
   const roofHex = paint.isTwoTone ? paint.roofHex : paint.bodyHex;
   for (const mat of model.roofMaterials) applyPaintToMaterial(mat, roofHex, paint.material);
+  for (const tt of model.twoToneMaterials) {
+    applyPhysicalProps(tt.material, paint.material);
+    if (tt.followBody) tt.uniforms.uBodyColor.value.set(paint.bodyHex);
+    tt.uniforms.uRoofColor.value.set(roofHex);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -324,6 +345,7 @@ export function buildKidModel(): CarModel {
     root,
     bodyMaterials: [bodyMat],
     roofMaterials: [roofMat],
+    twoToneMaterials: [],
     paintableMeshes,
     isKid: true,
   };

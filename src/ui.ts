@@ -10,10 +10,21 @@ export const STICKERS: { id: string; name: string }[] = [
   { id: 'badge', name: '圓形號碼' },
   { id: 'stripe', name: '賽道線條' },
   { id: 'tracks', name: '胎痕' },
+  { id: 'shape-circle', name: '圓形' },
+  { id: 'shape-square', name: '方形' },
+  { id: 'shape-triangle', name: '三角形' },
+  { id: 'shape-diamond', name: '菱形' },
 ];
 
-// 這兩款貼紙以純白線條繪製，允許使用者換色
-const RECOLORABLE_STICKERS = new Set(['jimny-text', 'mountain']);
+// 這些貼紙以純白色繪製，允許使用者換色
+const RECOLORABLE_STICKERS = new Set([
+  'jimny-text',
+  'mountain',
+  'shape-circle',
+  'shape-square',
+  'shape-triangle',
+  'shape-diamond',
+]);
 
 export interface UICallbacks {
   onPaint(id: string): void;
@@ -21,6 +32,7 @@ export interface UICallbacks {
   onTextStickerPlace(text: string, fontId: string, colorHex: string): void;
   onSizeChange(v: number): void;
   onRotationChange(v: number): void;
+  onAspectChange(v: number): void;
   onDelete(): void;
   onScreenshot(): void;
   onShare(): void;
@@ -107,13 +119,16 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
 
   const sizeCtl = el('input', { type: 'range', min: '0.15', max: '1.2', step: '0.01' });
   const rotCtl = el('input', { type: 'range', min: '-3.14', max: '3.14', step: '0.01' });
+  const aspectCtl = el('input', { type: 'range', min: '0.3', max: '3', step: '0.05' });
   const delBtn = el('button', { class: 'danger' }, ['🗑 刪除貼紙']);
   sizeCtl.addEventListener('input', () => cb.onSizeChange(Number(sizeCtl.value)));
   rotCtl.addEventListener('input', () => cb.onRotationChange(Number(rotCtl.value)));
+  aspectCtl.addEventListener('input', () => cb.onAspectChange(Number(aspectCtl.value)));
   delBtn.addEventListener('click', () => cb.onDelete());
   const panel = el('aside', { class: 'decal-panel', hidden: '' }, [
     el('label', {}, ['大小 ', sizeCtl]),
     el('label', {}, ['旋轉 ', rotCtl]),
+    el('label', {}, ['比例 ', aspectCtl]),
     delBtn,
   ]);
   root.append(panel);
@@ -256,6 +271,7 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
       if (d) {
         sizeCtl.value = String(d.size);
         rotCtl.value = String(d.rotation);
+        aspectCtl.value = String(d.aspect);
       }
     },
     setAttribution(text) {

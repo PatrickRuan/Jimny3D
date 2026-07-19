@@ -68,6 +68,9 @@ const ui = buildUI(app, {
   onRotationChange(v) {
     decalManager.setSelectedRotation(v);
   },
+  onAspectChange(v) {
+    decalManager.setSelectedAspect(v);
+  },
   onDelete() {
     decalManager.deleteSelected();
   },
