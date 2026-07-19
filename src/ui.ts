@@ -1,6 +1,7 @@
 import { PAINTS } from './colors';
 import type { PlacedDecal } from './decals';
 import { STICKER_FONTS, buildTextStickerSvg, encodeTextSticker } from './textSticker';
+import { STORY_INTRO, STORY_SECTIONS, STORY_OUTRO } from './story';
 
 export const STICKERS: { id: string; name: string }[] = [
   { id: 'jimny-text', name: 'JIMNY 字樣' },
@@ -32,6 +33,7 @@ export interface UI {
   showDecalControls(d: PlacedDecal | null): void;
   setAttribution(text: string): void;
   setKidMode(active: boolean): void;
+  setVisitorCounts(current: number, previous: number | null): void;
   toast(msg: string): void;
 }
 
@@ -53,6 +55,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   const shotBtn = el('button', { id: 'btn-shot' }, ['📷 截圖下載']);
   const shareBtn = el('button', { id: 'btn-share' }, ['🔗 分享連結']);
+  const storyBtn = el('button', { id: 'btn-story', title: '這個網站是怎麼做出來的？' }, ['🛠️ 開發全紀錄']);
   const kidBtn = el('button', { id: 'btn-kid', class: 'kid-toggle', title: '切換成小朋友版玩具車' }, [
     '🧸 小朋友 Jimny',
   ]);
@@ -61,12 +64,43 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   kidBtn.addEventListener('click', () => cb.onKidToggle());
 
   const title = el('h1', {}, ['Jimny', el('span', {}, ['3D'])]);
+  const brand = el('div', { class: 'brand' }, [title, kidBtn]);
   root.append(
     el('header', { class: 'topbar' }, [
-      title,
-      el('div', { class: 'actions' }, [kidBtn, shotBtn, shareBtn]),
+      brand,
+      el('div', { class: 'actions' }, [storyBtn, shotBtn, shareBtn]),
     ]),
   );
+
+  // --- 「這個網站怎麼做出來的」面板 -------------------------------------
+  const storySections = STORY_SECTIONS.map((s) =>
+    el('section', {}, [
+      el('h3', {}, [s.title]),
+      el(
+        'ul',
+        {},
+        s.points.map((p) => el('li', {}, [p])),
+      ),
+    ]),
+  );
+  const storyClose = el('button', { class: 'story-close', title: '關閉' }, ['✕']);
+  const storyModal = el('div', { class: 'story-modal' }, [
+    storyClose,
+    el('h2', {}, ['這個網站是怎麼做出來的？']),
+    el('p', { class: 'story-intro' }, [STORY_INTRO]),
+    ...storySections,
+    el('p', { class: 'story-outro' }, [STORY_OUTRO]),
+  ]);
+  const storyOverlay = el('div', { class: 'story-overlay', hidden: '' }, [storyModal]);
+  storyOverlay.addEventListener('click', (e) => {
+    if (e.target === storyOverlay) storyOverlay.hidden = true;
+  });
+  storyClose.addEventListener('click', () => (storyOverlay.hidden = true));
+  storyBtn.addEventListener('click', () => (storyOverlay.hidden = false));
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') storyOverlay.hidden = true;
+  });
+  root.append(storyOverlay);
 
   const hint = el('div', { class: 'hint', hidden: '' }, ['點擊車身貼上貼紙（Esc 取消）']);
   root.append(hint);
@@ -198,8 +232,9 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
   });
 
   const attribution = el('div', { class: 'attribution' });
+  const visitorEl = el('div', { class: 'visitor-counter', hidden: '' });
   const toastEl = el('div', { class: 'toast', hidden: '' });
-  root.append(attribution, toastEl);
+  root.append(attribution, visitorEl, toastEl);
 
   let toastTimer = 0;
 
@@ -228,6 +263,13 @@ export function buildUI(root: HTMLElement, cb: UICallbacks): UI {
     },
     setKidMode(active) {
       kidBtn.classList.toggle('active', active);
+    },
+    setVisitorCounts(current, previous) {
+      visitorEl.textContent =
+        previous === null
+          ? `👀 本月訪客 ${current}`
+          : `👀 本月訪客 ${current} ・上月 ${previous}`;
+      visitorEl.hidden = false;
     },
     toast(msg) {
       toastEl.textContent = msg;

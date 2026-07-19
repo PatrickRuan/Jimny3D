@@ -35,7 +35,7 @@ body,
   right: 0;
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   padding: 14px 20px;
   pointer-events: none;
   z-index: 10;
@@ -50,6 +50,20 @@ body,
 
 .topbar h1 span {
   color: #4a7c3a;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.brand .kid-toggle {
+  font-size: 11px;
+  padding: 4px 9px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
 .topbar .actions {
@@ -263,6 +277,92 @@ button.danger {
   pointer-events: none;
 }
 
+.visitor-counter {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  font-size: 11px;
+  color: rgba(35, 39, 43, 0.55);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.story-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 22, 24, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 24px;
+}
+
+.story-modal {
+  position: relative;
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px 30px;
+  max-width: 640px;
+  max-height: 84vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.story-modal h2 {
+  font-size: 20px;
+  margin-bottom: 12px;
+  padding-right: 30px;
+}
+
+.story-modal h3 {
+  font-size: 15px;
+  margin: 18px 0 6px;
+  color: #2f5222;
+}
+
+.story-modal p {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #333;
+}
+
+.story-modal .story-intro {
+  margin-bottom: 4px;
+}
+
+.story-modal .story-outro {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  color: #666;
+  font-style: italic;
+}
+
+.story-modal ul {
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.story-modal li {
+  font-size: 13px;
+  line-height: 1.65;
+  color: #333;
+}
+
+.story-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  background: #eee;
+}
+
 .toast {
   position: absolute;
   bottom: 120px;
@@ -290,5 +390,9 @@ button.danger {
   .row {
     max-width: 92vw;
     overflow-x: auto;
+  }
+
+  .story-modal {
+    padding: 22px 18px;
   }
 }

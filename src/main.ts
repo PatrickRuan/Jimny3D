@@ -6,6 +6,7 @@ import { DEFAULT_PAINT_ID, getPaint } from './colors';
 import { encodeStateToHash, decodeStateFromHash } from './share';
 import { encodeTextSticker } from './textSticker';
 import { buildUI } from './ui';
+import { trackVisit } from './visitor';
 
 const REAL_ATTRIBUTION = '3D model: "2023 Suzuki Jimny Sierra" by tonielpro520 (Sketchfab), CC-BY-4.0';
 const KID_ATTRIBUTION = '小朋友版 Jimny — 積木玩具風，操作最簡單 🧸';
@@ -129,3 +130,7 @@ async function boot() {
 }
 
 boot();
+
+trackVisit()
+  .then(({ current, previous }) => ui.setVisitorCounts(current, previous))
+  .catch(() => {});
